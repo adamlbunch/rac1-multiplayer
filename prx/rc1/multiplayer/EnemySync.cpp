@@ -4,6 +4,8 @@
 
 #include "EnemySync.h"
 
+#include <sys/sys_time.h>
+
 #include <rc1/Game.h>
 
 #include "LevelMobys.h"
@@ -43,6 +45,9 @@ typedef void (*MobyUpdateFunction)(Moby*);
 // How much nearer our player has to be to take an enemy over from another game, so it doesn't change hands back and
 //  forth while players are about as near
 #define CLAIM_MARGIN 4.0f
+
+// Players about this near to an enemy are as near, and the games' ranks settle which one runs it
+#define TIE_DISTANCE 0.5f
 
 // Enemies no other player is this near get sent only every few frames, to keep them ours
 #define STREAM_RADIUS 150.0f
@@ -86,6 +91,7 @@ struct SyncedEnemy {
 struct EnemySender {
     bool active;
     u16 uuid;
+    u32 rank;
     u32 newest_frame;
     u32 playback_frame;
     u32 last_packet_tick;
@@ -102,6 +108,7 @@ static u8 blend_frames_[MAX_LEVEL_MOBYS];
 
 static u32 ticks_ = 0;
 static u32 frame_ = 0;
+static u32 rank_ = 0;
 
 // The moby being updated, and what we noted about it before its update
 static Moby* updating_ = nullptr;
@@ -201,6 +208,19 @@ static EnemySender* find_sender(u16 uuid) {
     }
 
     return nullptr;
+}
+
+// Whether a game at `distance` from an enemy should run it rather than one at `other_distance`
+static bool nearer(float distance, u32 rank, float other_distance, u32 other_rank) {
+    if (distance < other_distance - TIE_DISTANCE) {
+        return true;
+    }
+
+    if (distance > other_distance + TIE_DISTANCE) {
+        return false;
+    }
+
+    return rank < other_rank;
 }
 
 // The state to show this frame: the newest one at or before the owner's playback frame
@@ -348,6 +368,7 @@ static void send_states() {
         MPPacketEnemyState* body = (MPPacketEnemyState*)packet.body;
         body->n_enemies = count;
         body->frame = frame_;
+        body->rank = rank_;
 
         u8* data = (u8*)body + sizeof(MPPacketEnemyState);
         for (int i = sent; i < sent + count; i++) {
@@ -516,6 +537,10 @@ bool EnemySync::update_mobys() {
 
     frame_ += 1;
 
+    if (rank_ == 0) {
+        rank_ = (u32)sys_time_get_system_time() | 1;
+    }
+
     Moby* moby = build_moby_update_list();
     MOBY_UPDATE_LIST = moby;
 
@@ -555,6 +580,38 @@ Moby* EnemySync::updating() {
     return updating_;
 }
 
+static void log_summary() {
+    int seen = 0;
+    for (int i = 0; i < MAX_LEVEL_MOBYS; i++) {
+        if ((traits_[i] & TRAITS_ENEMY) == TRAITS_ENEMY) {
+            seen += 1;
+        }
+    }
+
+    int ours = 0;
+    int theirs = 0;
+    int reacting = 0;
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (!enemies_[i].used) {
+            continue;
+        }
+
+        if (enemies_[i].owner == OWNER_SELF) {
+            ours += 1;
+        } else if (owner_is_remote(&enemies_[i])) {
+            theirs += 1;
+        }
+
+        if (enemies_[i].reacting) {
+            reacting += 1;
+        }
+    }
+
+    float others_sq = ratchet_moby != nullptr ? Mirror::nearest_player_distance_sq(&ratchet_moby->position) : 1e30f;
+    Logger::info("EnemySync: %d enemies seen, running %d, %d from other games (%d reacting), other player %s",
+                 seen, ours, theirs, reacting, others_sq < 1e29f ? "here" : "not here");
+}
+
 void EnemySync::on_tick(Client* client) {
     ticks_ += 1;
 
@@ -581,6 +638,10 @@ void EnemySync::on_tick(Client* client) {
         if (sender->playback_frame > sender->newest_frame) {
             sender->playback_frame = sender->newest_frame;
         }
+    }
+
+    if (ticks_ % 600 == 0) {
+        log_summary();
     }
 
     for (int i = 0; i < MAX_ENEMIES; i++) {
@@ -612,7 +673,9 @@ void EnemySync::on_tick(Client* client) {
     }
 }
 
-static void receive_state(u16 sender, u32 frame, MPEnemyState* state, MPEnemyMatrix* matrix) {
+static void receive_state(EnemySender* sender_info, u32 frame, MPEnemyState* state, MPEnemyMatrix* matrix) {
+    u16 sender = sender_info->uuid;
+
     if (state->index >= MAX_LEVEL_MOBYS) {
         return;
     }
@@ -626,11 +689,12 @@ static void receive_state(u16 sender, u32 frame, MPEnemyState* state, MPEnemyMat
 
     if (enemy != nullptr && enemy->owner == OWNER_SELF) {
         // We both run it: the game whose player is nearer keeps it
-        if (!(state->distance < player_distance(moby))) {
+        if (!nearer(state->distance, sender_info->rank, player_distance(moby), rank_)) {
             return;
         }
     } else if (enemy != nullptr && owner_is_remote(enemy) && enemy->owner != sender) {
-        if (!(state->distance < enemy->owner_distance)) {
+        EnemySender* owner = find_sender(enemy->owner);
+        if (owner != nullptr && !nearer(state->distance, sender_info->rank, enemy->owner_distance, owner->rank)) {
             return;
         }
     }
@@ -704,6 +768,7 @@ void EnemySync::receive(MPPacketEnemyState* packet, size_t len) {
     }
 
     sender->last_packet_tick = ticks_;
+    sender->rank = packet->rank;
     if (packet->frame > sender->newest_frame) {
         sender->newest_frame = packet->frame;
     }
@@ -728,7 +793,7 @@ void EnemySync::receive(MPPacketEnemyState* packet, size_t len) {
             data += sizeof(MPEnemyMatrix);
         }
 
-        receive_state(packet->sender, packet->frame, state, matrix);
+        receive_state(sender, packet->frame, state, matrix);
     }
 }
 

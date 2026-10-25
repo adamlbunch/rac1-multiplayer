@@ -32,7 +32,7 @@ PPU_PRX_LDFLAGS  += \
 	-lm_stub \
 	-lnet_stub \
 	-lsysutil_stub \
-	-Map=$(BIN_DIR)/mod.map \
+	-Wl,-Map=$(BIN_DIR)/mod.map \
 	-Wl,--end-group
 
 CCFLAGS = $(SHK_PRX_DEFSYMS) $(SHK_PRX_DEFINES) rc1/globals.ld $(SFILES) $(CPPFILES) $(CFILES) $(DEFINES) -I$(PS3_SDK)/target/ppu/include -I./ -fno-exceptions -fno-rtti -Wa,-mregnames $(PPU_PRX_LDFLAGS)

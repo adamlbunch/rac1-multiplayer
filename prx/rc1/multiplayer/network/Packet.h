@@ -547,6 +547,7 @@ typedef struct {
     u8 n_enemies;
     u8 pad;
     u32 frame;            // Sender's frame counter
+    u32 rank;             // Random number of the sender's game, which settles who runs an enemy players are as near to
 } MPPacketEnemyState;
 
 #define MP_ENEMY_FLAG_MATRIX  0x1   // The moby sets its own transform rather than have the game build it
