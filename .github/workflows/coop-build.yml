@@ -1,0 +1,57 @@
+name: Co-op build
+
+# Builds the mod from the coop-fixes branch and keeps the .pkg as a workflow artifact. Unlike release.yml this doesn't
+#  publish a release.
+on:
+  push:
+    branches: [ coop-fixes ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set PS3_SDK path
+        run: |
+          $workspacePath = "${{ github.workspace }}" -replace '\', '/'
+          echo "PS3_SDK=$workspacePath/PS3_SDK/cell" | Out-File -FilePath $env:GITHUB_ENV -Append
+        shell: pwsh
+
+      - name: Download and extract PS3 SDK
+        run: |
+          Invoke-WebRequest -Uri https://bordplate.no/cell.zip -OutFile PS3_SDK.zip
+          Expand-Archive -Path PS3_SDK.zip -DestinationPath "${{ env.PS3_SDK }}/../"
+        shell: pwsh
+
+      - name: Install Dependencies
+        run: |
+          choco install make
+        shell: pwsh
+
+      - name: Create userconfig.mk
+        run: |
+          echo "PYTHON = python" > userconfig.mk
+          echo "RPCS3_DIR = ${{ env.PS3_SDK }}/RPCS3/" >> userconfig.mk
+        shell: pwsh
+
+      - name: Build and package
+        run: make all
+        shell: bash
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: rac1-coop-mod
+          path: |
+            build/BDUPS3-BORD00001_00-0000000000000000.pkg
+            build/PS3_GAME/USRDIR
+            prx/build/bin/mod.map
