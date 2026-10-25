@@ -113,6 +113,7 @@ private:
 
     void persist();
     void load();
+    bool load_from(const char* path);
 };
 
 #endif //RAC1_MULTIPLAYER_PERSISTENTSTORAGE_H

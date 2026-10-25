@@ -42,6 +42,9 @@ private:
 
     u32 frames_;
 
+    // Set with "autoconnect=true" in settings.conf: connects to the last direct IP at boot. For automated testing.
+    bool autoconnect_;
+
     Input username_input_;
     Input direct_ip_input_;
 
@@ -49,6 +52,7 @@ private:
 
     static int username_input_callback(Input* input, void* userdata, int status);
     static int direct_ip_input_callback(Input* input, void* userdata, int status);
+    static void connect_direct(String address);
 
     static void server_query_callback(ServerListView* self, Vector<GameServer*>* servers);
 };

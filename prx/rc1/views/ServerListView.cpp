@@ -57,6 +57,13 @@ void ServerListView::set_servers(Vector<GameServer*>* servers) {
 }
 
 void ServerListView::render() {
+    // Connecting deletes this view
+    if (autoconnect_) {
+        autoconnect_ = false;
+        connect_direct(direct_ip_input_.input_text);
+        return;
+    }
+
     frames_ += 1;
     if (frames_ > 8) {
         game_state = Movie;
@@ -104,6 +111,8 @@ void ServerListView::on_load() {
 
     String label = username.length() > 0 ? String::format("\x13 %s", username.c_str()) : "\x13 Change nickname";
 
+    autoconnect_ = storage.get_bool("autoconnect") && username.length() > 0 && last_direct_ip.length() > 0;
+
     if (username.length() <= 0) {
         username_input_.activate();
     } else {
@@ -141,7 +150,10 @@ void ServerListView::on_load() {
     add_element(description_area_);
     add_element(info_area_);
 
-    refresh();
+    // Querying the directory would make it the client, and its answer would then delete the client we connect with
+    if (!autoconnect_) {
+        refresh();
+    }
 }
 
 void ServerListView::on_unload() {
@@ -192,21 +204,33 @@ int ServerListView::direct_ip_input_callback(Input *input, void *userdata, int s
     ServerListView *self = (ServerListView *)userdata;
 
     if (status == 0) {
-        PersistentStorage storage = PersistentStorage("settings.conf");
-        storage.set("last_direct_ip", input->input_text);
-
-        int port = 2407;
-
-        // Get port from input if it's there
-        if (input->input_text.find(":") != -1) {
-            String port_str = input->input_text.substr(input->input_text.find(":") + 1);
-            port = atoi(port_str.c_str());
+        {
+            PersistentStorage storage = PersistentStorage("settings.conf");
+            storage.set("last_direct_ip", input->input_text);
         }
 
-        Game::shared().connect_to((char*)input->input_text.c_str(), port);
+        connect_direct(input->input_text);
     }
 
     return 0;
+}
+
+void ServerListView::connect_direct(String address) {
+    static char ip[64];
+    int port = 2407;
+
+    String host = address;
+
+    // Get port from input if it's there
+    if (address.find(":") != -1) {
+        String port_str = address.substr(address.find(":") + 1);
+        port = atoi(port_str.c_str());
+        host = address.substr(0, address.find(":"));
+    }
+
+    snprintf(ip, sizeof(ip), "%s", host.c_str());
+
+    Game::shared().connect_to(ip, port);
 }
 
 void ServerListView::server_query_callback(ServerListView* self, Vector<GameServer*>* servers) {
