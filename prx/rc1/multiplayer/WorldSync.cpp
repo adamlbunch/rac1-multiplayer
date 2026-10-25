@@ -18,6 +18,11 @@
 // MPMoby's update function: mobys running it are our copies of other players and their things
 #define MP_MOBY_UPDATE_FUNC ((void*)0x710ed8)
 
+// The moby table starts with the mobys placed in the level, which every game has at the same index and UID, and
+//  continues with the ones spawned while playing
+#define LEVEL_MOBYS_START (*(Moby**)0xa390a0)
+#define LEVEL_MOBYS_END (*(Moby**)0xa390a4)
+
 // How long a moby someone else destroyed gets to go away on its own (play its death) before we remove it
 #define KILL_GRACE_TICKS (60 * 3)
 
@@ -26,6 +31,16 @@
 
 #define MAX_HIT_MOBYS 32
 #define MAX_PENDING_KILLS 32
+#define MAX_REMOTE_HITS 16
+
+// Bolts that fly out of destroyed crates and enemies
+#define BOLT_O_CLASS 13
+#define BIG_BOLT_O_CLASS 14
+#define BOLT_RADIUS 5.0f
+
+// How long after another player's hit we keep its target's bolts from being picked up, and after it's gone
+#define REMOTE_HIT_BOLTS_TICKS (60 * 6)
+#define REMOTE_KILL_BOLTS_TICKS (60 * 2)
 
 struct HitMoby {
     Moby* moby;
@@ -40,8 +55,21 @@ struct PendingKill {
     u32 deadline;
 };
 
+// Mobys another player's hit was the last to land on. When they die of it, every game drops their bolts, but the
+//  bolts count is shared, so only the game of the player who made the hit keeps them.
+struct RemoteHit {
+    Moby* moby;
+    u16 uid;
+    u16 o_class;
+    Vec4 position;
+    u32 hit_tick;
+    u32 gone_tick;
+    bool gone;
+};
+
 static HitMoby hit_mobys_[MAX_HIT_MOBYS];
 static PendingKill pending_kills_[MAX_PENDING_KILLS];
+static RemoteHit remote_hits_[MAX_REMOTE_HITS];
 
 static u32 ticks_ = 0;
 static u32 next_record_ = 0;
@@ -56,7 +84,18 @@ static bool plausible_moby(Moby* moby) {
 
 // Placed in the level (as opposed to spawned while playing), so every game has it under the same UID
 static bool is_level_moby(Moby* moby) {
-    return moby->uid != 0 && moby->uid != 0xffff && moby != ratchet_moby && moby->p_update != MP_MOBY_UPDATE_FUNC;
+    return moby >= LEVEL_MOBYS_START && moby < LEVEL_MOBYS_END && moby != ratchet_moby &&
+           moby->p_update != MP_MOBY_UPDATE_FUNC;
+}
+
+static Moby* find_level_moby(u16 uid, u16 o_class) {
+    for (Moby* moby = LEVEL_MOBYS_START; moby < LEVEL_MOBYS_END; moby++) {
+        if (moby->state >= 0 && moby->uid == uid && moby->o_class == o_class) {
+            return moby;
+        }
+    }
+
+    return nullptr;
 }
 
 static void remember_hit(Moby* moby) {
@@ -90,6 +129,14 @@ static void remember_hit(Moby* moby) {
     slot->last_hit_tick = ticks_;
 }
 
+static void forget_remote_hit(Moby* moby) {
+    for (int i = 0; i < MAX_REMOTE_HITS; i++) {
+        if (remote_hits_[i].moby == moby) {
+            remote_hits_[i].moby = nullptr;
+        }
+    }
+}
+
 static void send_record(Client* client, u8* record) {
     Moby* target = *(Moby**)(record + 0x34);
     Moby* source = *(Moby**)(record + 0x20);
@@ -98,6 +145,9 @@ static void send_record(Client* client, u8* record) {
     if (!plausible_moby(target) || !is_level_moby(target)) {
         return;
     }
+
+    // Our hit is the latest on it now, so whatever it drops is ours
+    forget_remote_hit(target);
 
     // The server's level scripts already sync these
     GameClient* game_client = (GameClient*)client;
@@ -157,20 +207,76 @@ static void check_hit_mobys(Client* client) {
 static void apply_pending_kills() {
     for (int i = 0; i < MAX_PENDING_KILLS; i++) {
         PendingKill* kill = &pending_kills_[i];
-        if (kill->uid == 0) {
+        if (kill->o_class == 0xffff) {
             continue;
         }
 
-        Moby* moby = Moby::find_by_uid(kill->uid);
-        if (moby == nullptr || moby->o_class != kill->o_class) {
-            kill->uid = 0;
+        Moby* moby = find_level_moby(kill->uid, kill->o_class);
+        if (moby == nullptr) {
+            kill->o_class = 0xffff;
             continue;
         }
 
         if ((s32)(ticks_ - kill->deadline) >= 0) {
             Logger::debug("WorldSync: removing moby %d (o_class %d) another player destroyed", kill->uid, kill->o_class);
-            Moby::delete_by_uid(kill->uid);
-            kill->uid = 0;
+            moby->state = -1;
+            delete_moby(moby);
+            kill->o_class = 0xffff;
+        }
+    }
+}
+
+static void remove_remote_hit_bolts() {
+    bool any = false;
+
+    for (int i = 0; i < MAX_REMOTE_HITS; i++) {
+        RemoteHit* hit = &remote_hits_[i];
+        if (hit->moby == nullptr) {
+            continue;
+        }
+
+        Moby* moby = hit->moby;
+        if (!hit->gone && (moby->state < 0 || moby->uid != hit->uid || moby->o_class != hit->o_class)) {
+            hit->gone = true;
+            hit->gone_tick = ticks_;
+        }
+
+        if (!hit->gone) {
+            hit->position = moby->position;
+        }
+
+        if ((hit->gone && ticks_ - hit->gone_tick > REMOTE_KILL_BOLTS_TICKS) ||
+            (!hit->gone && ticks_ - hit->hit_tick > REMOTE_HIT_BOLTS_TICKS)) {
+            hit->moby = nullptr;
+            continue;
+        }
+
+        any = true;
+    }
+
+    if (!any) {
+        return;
+    }
+
+    for (Moby* moby = LEVEL_MOBYS_END; moby < moby_ptr_end; moby++) {
+        if (moby->state < 0 || (moby->o_class != BOLT_O_CLASS && moby->o_class != BIG_BOLT_O_CLASS)) {
+            continue;
+        }
+
+        for (int i = 0; i < MAX_REMOTE_HITS; i++) {
+            RemoteHit* hit = &remote_hits_[i];
+            if (hit->moby == nullptr) {
+                continue;
+            }
+
+            float dx = moby->position.x - hit->position.x;
+            float dy = moby->position.y - hit->position.y;
+            float dz = moby->position.z - hit->position.z;
+            if (dx * dx + dy * dy + dz * dz < BOLT_RADIUS * BOLT_RADIUS) {
+                moby->state = -1;
+                delete_moby(moby);
+                break;
+            }
         }
     }
 }
@@ -199,11 +305,12 @@ void WorldSync::on_tick(Client* client) {
 
     check_hit_mobys(client);
     apply_pending_kills();
+    remove_remote_hit_bolts();
 }
 
 void WorldSync::receive_hit(MPPacketMobyHit* hit) {
-    Moby* target = Moby::find_by_uid(hit->uid);
-    if (target == nullptr || target->o_class != hit->o_class) {
+    Moby* target = find_level_moby(hit->uid, hit->o_class);
+    if (target == nullptr) {
         return;
     }
 
@@ -234,21 +341,37 @@ void WorldSync::receive_hit(MPPacketMobyHit* hit) {
     DAMAGE_NEXT_RECORD = (index + 1) % DAMAGE_RECORD_COUNT;
 
     injected_ |= 1ULL << index;
+
+    // Theirs is the latest hit on it now
+    RemoteHit* slot = &remote_hits_[0];
+    for (int i = 0; i < MAX_REMOTE_HITS; i++) {
+        if (remote_hits_[i].moby == target) {
+            slot = &remote_hits_[i];
+            break;
+        }
+
+        if (remote_hits_[i].moby == nullptr || remote_hits_[i].hit_tick < slot->hit_tick) {
+            slot = &remote_hits_[i];
+        }
+    }
+
+    slot->moby = target;
+    slot->uid = target->uid;
+    slot->o_class = target->o_class;
+    slot->position = target->position;
+    slot->hit_tick = ticks_;
+    slot->gone = false;
 }
 
 void WorldSync::receive_killed(MPPacketMobyKilled* killed) {
-    if (killed->uid == 0 || killed->uid == 0xffff) {
-        return;
-    }
-
     PendingKill* free_slot = nullptr;
     for (int i = 0; i < MAX_PENDING_KILLS; i++) {
         PendingKill* kill = &pending_kills_[i];
-        if (kill->uid == killed->uid) {
+        if (kill->o_class != 0xffff && kill->uid == killed->uid && kill->o_class == killed->o_class) {
             return;
         }
 
-        if (kill->uid == 0 && free_slot == nullptr) {
+        if (kill->o_class == 0xffff && free_slot == nullptr) {
             free_slot = kill;
         }
     }
@@ -262,7 +385,10 @@ void WorldSync::receive_killed(MPPacketMobyKilled* killed) {
 
 void WorldSync::reset() {
     memset(hit_mobys_, 0, sizeof(hit_mobys_));
-    memset(pending_kills_, 0, sizeof(pending_kills_));
+    memset(remote_hits_, 0, sizeof(remote_hits_));
+
+    // Free pending kills are marked with o_class 0xffff, since UID 0 is a real one
+    memset(pending_kills_, 0xff, sizeof(pending_kills_));
     injected_ = 0;
     next_record_ = DAMAGE_NEXT_RECORD % DAMAGE_RECORD_COUNT;
 }
