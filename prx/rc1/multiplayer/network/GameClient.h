@@ -33,6 +33,7 @@ struct MobyInfo {
     u16 mode_bits;
     u16 position_bone;
     u16 transform_bone;
+    bool unavailable;  // Its model isn't loaded in our game, so we can't draw it
 };
 
 struct GameClient : public Client {

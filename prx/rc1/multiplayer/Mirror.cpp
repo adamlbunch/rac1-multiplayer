@@ -7,6 +7,7 @@
 #include <rc1/Game.h>
 
 #include "MPMoby.h"
+#include "GadgetModels.h"
 #include "network/GameClient.h"
 
 // Gadget slots: the game keeps up to 2 mobys per slot on the player (hand, back, head, feet...), 0x50 bytes apart
@@ -197,7 +198,19 @@ static void remove_attachment(RemotePlayer* remote, int slot, bool mobys_exist) 
     }
 
     remote->attachment_mobys[slot] = nullptr;
+    remote->attachment_models[slot] = nullptr;
     remote->attachment_animation[slot].valid = false;
+}
+
+// The model to draw a copy of another player's attachment with: our own load of it for weapons and gadgets, which the
+//  game only has loaded while our player holds them, otherwise whatever the game has loaded for its class. Null if we
+//  can't draw it.
+static MobyClass* attachment_model(RemotePlayer* remote, u16 o_class) {
+    if (GadgetModels::is_gadget(o_class)) {
+        return GadgetModels::load(o_class, remote - remote_players_);
+    }
+
+    return GadgetModels::loaded_class(o_class);
 }
 
 static void deactivate(RemotePlayer* remote, bool mobys_exist) {
@@ -382,20 +395,29 @@ void Mirror::on_tick() {
             MPMirrorMoby* state = &current->attachment[slot];
             memcpy(&remote->attachment_state[slot], state, sizeof(MPMirrorMoby));
 
+            // Drawing a copy with a model that isn't loaded, or got swapped for another one, crashes the game
+            MobyClass* model = attachment_model(remote, state->o_class);
+
             Moby* moby = remote->attachment_mobys[slot];
-            if (moby != nullptr && (!valid_moby(moby) || moby->o_class != state->o_class)) {
+            if (moby != nullptr && (!valid_moby(moby) || moby->o_class != state->o_class || moby->p_class != model)) {
                 remove_attachment(remote, slot, true);
                 moby = nullptr;
             }
 
             if (moby == nullptr) {
-                moby = (Moby*)MPMoby::spawn(0, state->o_class, MP_MOBY_FLAG_MIRROR | MP_MOBY_FLAG_NO_COLLISION, 0);
+                if (model == nullptr) {
+                    continue;
+                }
+
+                moby = GadgetModels::spawn_with_class(state->o_class, model,
+                                                      MP_MOBY_FLAG_MIRROR | MP_MOBY_FLAG_NO_COLLISION);
                 if (moby == nullptr) {
                     continue;
                 }
 
                 moby->collision = nullptr;
                 remote->attachment_mobys[slot] = moby;
+                remote->attachment_models[slot] = model;
                 remote->attachment_animation[slot].valid = false;
             }
         }

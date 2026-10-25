@@ -32,6 +32,7 @@ PPU_PRX_LDFLAGS  += \
 	-lm_stub \
 	-lnet_stub \
 	-lsysutil_stub \
+	-lgcm_sys_stub \
 	-Map=$(BIN_DIR)/mod.map \
 	-Wl,--end-group
 

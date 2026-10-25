@@ -55,6 +55,7 @@ struct RemotePlayer {
     MirrorAnimation hero_animation;
     bool hero_manipulated;
     Moby* attachment_mobys[MP_MIRROR_ATTACHMENT_SLOTS];
+    MobyClass* attachment_models[MP_MIRROR_ATTACHMENT_SLOTS];  // What each copy must be drawn with, see GadgetModels
     MPMirrorMoby attachment_state[MP_MIRROR_ATTACHMENT_SLOTS];
     MirrorAnimation attachment_animation[MP_MIRROR_ATTACHMENT_SLOTS];
 };

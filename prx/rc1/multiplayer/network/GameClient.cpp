@@ -15,6 +15,7 @@
 
 #include "../Mirror.h"
 #include "../WorldSync.h"
+#include "../GadgetModels.h"
 
 GameClient::GameClient(char *ip, int port) : Client(ip, port) {
     mobys_.resize(MAX_MP_MOBYS);
@@ -92,6 +93,17 @@ void GameClient::create_moby(MobyInfo* moby_info) {
         Logger::error("Replaced moby with existing UUID: %d", moby_info->uuid);
         Mirror::forget(moby_info->uuid);
         delete_moby(moby);
+    }
+
+    // Other players' weapons and their shots can be of classes our game has no model loaded for (weapon models are
+    //  only loaded while held). Drawing one crashes the game, so leave it out but tell the server it's done.
+    moby_info->unavailable = GadgetModels::is_gadget(moby_info->o_class) ||
+                             GadgetModels::loaded_class(moby_info->o_class) == nullptr;
+    if (moby_info->unavailable) {
+        Logger::debug("[%d] Not spawning oClass %d, its model isn't loaded", moby_info->uuid, moby_info->o_class);
+        moby_info->moby = nullptr;
+        send_ack(Packet::make_moby_create_failure_packet(moby_info->uuid, MP_MOBY_CREATE_FAILURE_REASON_SUCCESS));
+        return;
     }
 
     Logger::info("[%d] Spawning Moby (oClass: %d)", moby_info->uuid, moby_info->o_class);
@@ -239,6 +251,8 @@ void GameClient::update_moby(MPPacketMobyUpdate* packet) {
 
         send_ack(Packet::make_moby_create_failure_packet(packet->uuid, MP_MOBY_CREATE_FAILURE_REASON_UPDATE_NON_EXISTENT));
 
+        return;
+    } else if (!moby && moby_info->unavailable && moby_info->o_class == packet->o_class) {
         return;
     } else if (!moby) {
         Logger::error("Respawning Moby UUID: %d", packet->uuid);
