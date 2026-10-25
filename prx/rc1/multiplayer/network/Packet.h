@@ -51,7 +51,7 @@ Here is an example of how a packet with type set to MP_PACKET_MOBY_UPDATE and no
 
 #include "lib/types.h"
 
-#define MP_API_VERSION  14
+#define MP_API_VERSION  15
 
 #define MP_PACKET_CONNECT            1
 #define MP_PACKET_SYN                2
@@ -89,6 +89,7 @@ Here is an example of how a packet with type set to MP_PACKET_MOBY_UPDATE and no
 #define MP_PACKET_PLAYER_STATE        34
 #define MP_PACKET_MOBY_HIT            35
 #define MP_PACKET_MOBY_KILLED         36
+#define MP_PACKET_ENEMY_STATE         37
 
 #define MP_PACKET_FLAG_RPC           0x1
 
@@ -499,7 +500,18 @@ typedef struct {
     u32 field30;
     Vec4 vector0;
     Vec4 vector1;
+    // From API version 15, older games don't send these. Mobys are told apart by their position in the level's moby
+    //  table, the same in every game, since UIDs aren't always unique.
+    u16 index;
+    // What made the hit: one of the level's own mobys (an enemy run by the sender's game, see MPPacketEnemyState), or
+    //  the sender's player when source_o_class is 0xffff
+    u16 source_index;
+    u16 source_o_class;
+    u16 pad2;
 } MPPacketMobyHit;
+
+// What older games send of MPPacketMobyHit
+#define MP_MOBY_HIT_V14_SIZE (sizeof(MPPacketMobyHit) - 8)
 
 // One of the level's mobys a player had damaged is gone in their game. Backs up MPPacketMobyHit for kills that
 //  don't come down to damage the other games could apply.
@@ -507,8 +519,55 @@ typedef struct {
     u16 sender;
     u16 uid;
     u16 o_class;
-    u16 pad;
+    u16 index_1;          // Position in the level's moby table plus one, or 0 from older games that don't send it
 } MPPacketMobyKilled;
+
+// The animation part of a moby's state: the game's own fields from 0x50, see Mirror.cpp
+typedef struct {
+    u8 seq;
+    u8 prev_seq;          // 0xff: blending from the pose the moby was in when the animation started
+    u8 frame0;
+    u8 frame1;
+    float t;
+    float speed;
+    float rate;
+    u8 flags;
+    u8 restarts;          // Bumped every time an animation is (re)started, even with the same sequence
+    u8 blend_frames;      // How many frames the animation blends in over when it starts
+    u8 pad;
+} MPMobyAnimation;
+
+// The level's enemies are run by one player's game at a time, normally the one of the player nearest to them. That
+//  game sends their state every frame, and the others draw them from it instead of running them. The server passes
+//  it on to the other players on the level.
+//
+// Followed by `n_enemies` MPEnemyState, each followed by MPEnemyMatrix if it has MP_ENEMY_FLAG_MATRIX.
+typedef struct {
+    u16 sender;           // Filled in by the server, see MPPacketPlayerState
+    u8 n_enemies;
+    u8 pad;
+    u32 frame;            // Sender's frame counter
+} MPPacketEnemyState;
+
+#define MP_ENEMY_FLAG_MATRIX  0x1   // The moby sets its own transform rather than have the game build it
+
+typedef struct {
+    u16 index;            // Position in the level's moby table, the same in every game (UIDs aren't unique)
+    u16 o_class;
+    u8 flags;
+    u8 state;             // The moby's own state, the one its AI runs on
+    u8 alpha;
+    u8 pad;
+    float distance;       // How far the sender's player is from it, to settle which game runs it
+    float position[3];
+    float rotation[3];
+    float scale;
+    MPMobyAnimation anim;
+} MPEnemyState;
+
+typedef struct {
+    float rows[12];       // Rows 0-2 of the moby's transform
+} MPEnemyMatrix;
 
 #define MP_LEVEL_CONFIG_OPTION_BLOCK_MOBY_UID   1
 #define MP_LEVEL_CONFIG_OPTION_BLOCK_OCLASS     2
@@ -556,7 +615,7 @@ struct Packet {
     static Packet* make_file_upload_part_packet(u8 file_type, void* data, u32 len, u32 offset);
     static Packet* make_player_standing_on_moby_packet(u16 uuid);
     static Packet* make_ui_reset_packet();
-    static Packet* make_moby_killed_packet(u16 uid, u16 o_class);
+    static Packet* make_moby_killed_packet(u16 uid, u16 o_class, u16 index);
 };
 
 #endif

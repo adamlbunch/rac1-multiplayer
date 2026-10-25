@@ -385,7 +385,25 @@ SHK_HOOK(struct Damage*, _moby_get_damage, Moby*, u32, u32);
 struct Damage* _moby_get_damage_hook(Moby* moby, u32 flags, u32 unk) {
     struct Damage* damage = SHK_CALL_HOOK(_moby_get_damage, moby, flags, unk);
 
+    _c_on_moby_get_damage(moby);
+
     return damage;
+}
+
+// The game's loop that updates every moby near the camera each frame. The mod runs its own copy of it while
+//  connected, see EnemySync.
+SHK_HOOK(void, update_mobys);
+void update_mobys_hook() {
+    if (!_c_update_mobys()) {
+        SHK_CALL_HOOK(update_mobys);
+    }
+}
+
+SHK_HOOK(void, _set_moby_animation, Moby*, u32, u32, u32);
+void set_moby_animation_hook(Moby* moby, u32 seq, u32 frame, u32 blend_frames) {
+    SHK_CALL_HOOK(_set_moby_animation, moby, seq, frame, blend_frames);
+
+    _c_on_moby_animation_started(moby, blend_frames);
 }
 
 SHK_HOOK(u64, init_gameplay);
@@ -431,6 +449,8 @@ void rc1_init() {
     SHK_BIND_HOOK(set_ratchet_animation, set_ratchet_animation_hook);
     SHK_BIND_HOOK(_spawn_moby, spawn_moby_hook);
     SHK_BIND_HOOK(_moby_get_damage, _moby_get_damage_hook);
+    SHK_BIND_HOOK(update_mobys, update_mobys_hook);
+    SHK_BIND_HOOK(_set_moby_animation, set_moby_animation_hook);
     SHK_BIND_HOOK(metal_detector_spot_update_func, metal_detector_spot_update_func_hook);
     SHK_BIND_HOOK(bink_do_frame, bink_do_frame_hook);
     SHK_BIND_HOOK(perform_save_action, perform_save_action_hook);

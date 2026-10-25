@@ -45,17 +45,6 @@ static bool valid_moby(Moby* moby) {
            moby->state >= 0 && moby->p_class != nullptr;
 }
 
-static MobySeq* animation_sequence(Moby* moby, u8 seq) {
-    u8* p_class = (u8*)moby->p_class;
-
-    // Sequence count at 0xc, sequence pointers from 0x48
-    if (p_class == nullptr || seq >= p_class[0xc]) {
-        return nullptr;
-    }
-
-    return ((MobySeq**)(p_class + 0x48))[seq];
-}
-
 static void capture(MPMirrorMoby* out, Moby* moby, u8 slot) {
     u8* m = (u8*)moby;
 
@@ -425,59 +414,23 @@ void Mirror::on_tick() {
 }
 
 static void apply_animation(Moby* moby, MPMirrorMoby* state, MirrorAnimation* applied, bool track_restarts) {
-    u8* m = (u8*)moby;
-
     if (moby->o_class != state->o_class) {
         return;
     }
 
-    MobySeq* seq = animation_sequence(moby, state->anim_seq);
-    if (seq == nullptr || state->anim_frame1 >= seq->frame_count) {
-        return;
-    }
+    MPMobyAnimation animation;
+    animation.seq = state->anim_seq;
+    animation.prev_seq = state->anim_prev_seq;
+    animation.frame0 = state->anim_frame0;
+    animation.frame1 = state->anim_frame1;
+    animation.t = state->anim_t;
+    animation.speed = state->anim_speed;
+    animation.rate = state->anim_rate;
+    animation.flags = state->anim_flags;
+    animation.restarts = state->anim_restarts;
+    animation.blend_frames = state->blend_frames;
 
-    bool started = !applied->valid || applied->seq != state->anim_seq ||
-                   (track_restarts && applied->restarts != state->anim_restarts);
-
-    // The sender is blending into this animation from the pose it was in, do the same from ours
-    if (started && state->anim_prev_seq == 0xff) {
-        set_moby_animation(moby, state->anim_seq, state->anim_frame1, state->blend_frames);
-    }
-
-    applied->valid = true;
-    applied->seq = state->anim_seq;
-    applied->restarts = state->anim_restarts;
-
-    if (state->anim_prev_seq != 0xff) {
-        MobySeq* prev_seq = animation_sequence(moby, state->anim_prev_seq);
-        if (prev_seq == nullptr || state->anim_frame0 >= prev_seq->frame_count) {
-            return;
-        }
-
-        m[0x52] = state->anim_prev_seq;
-        m[0x50] = state->anim_frame0;
-    } else if (m[0x52] != 0xff) {
-        // No blend of our own to continue (it ended, or the game had no room for one), go straight to the target
-        m[0x52] = state->anim_seq;
-        m[0x50] = state->anim_frame1;
-    }
-
-    m[0x53] = state->anim_seq;
-    m[0x51] = state->anim_frame1;
-    memcpy(m + 0x54, &state->anim_t, sizeof(float));
-    memcpy(m + 0x58, &state->anim_speed, sizeof(float));
-    memcpy(m + 0x5c, &state->anim_rate, sizeof(float));
-    m[0x70] = state->anim_flags;
-
-    // While the sender blends into an animation, its own code moves the blend along bit by bit. The game's
-    //  animation step would finish our blend in one go, so keep it off the copy until the sender's blend is done.
-    if (state->anim_prev_seq == 0xff && m[0x52] == 0xff) {
-        float stopped = 0.0f;
-        memcpy(m + 0x5c, &stopped, sizeof(float));
-    }
-
-    // Points the moby at the frame data for the frames we just set
-    moby_frame_data_something(moby);
+    MobyAnimation::apply(moby, &animation, applied, track_restarts);
 }
 
 static void apply_transform(Moby* moby, MPMirrorMoby* state) {
@@ -573,6 +526,27 @@ void Mirror::update_attachment(Moby* moby) {
             break;
         }
     }
+}
+
+float Mirror::nearest_player_distance_sq(const Vec4* position) {
+    float nearest = 1e30f;
+
+    for (int i = 0; i < MIRROR_MAX_PLAYERS; i++) {
+        RemotePlayer* remote = &remote_players_[i];
+        if (!remote->active || !remote->showing) {
+            continue;
+        }
+
+        float dx = remote->hero_state.position[0] - position->x;
+        float dy = remote->hero_state.position[1] - position->y;
+        float dz = remote->hero_state.position[2] - position->z;
+        float distance = dx * dx + dy * dy + dz * dz;
+        if (distance < nearest) {
+            nearest = distance;
+        }
+    }
+
+    return nearest;
 }
 
 bool Mirror::is_mirrored(u16 uuid) {

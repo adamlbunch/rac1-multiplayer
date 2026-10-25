@@ -13,14 +13,24 @@
 
 #include "network/Packet.h"
 
+// The game records damage in a ring of 64 records. Whatever hurts a moby fills in the next record and points the
+//  moby's `damage` at it, and the moby reads it in its update.
+#define DAMAGE_RECORDS ((u8*)0xa14c00)
+#define DAMAGE_RECORD_SIZE 0x40
+#define DAMAGE_RECORD_COUNT 64
+#define DAMAGE_NEXT_RECORD (*(u32*)0xa10954)
+
 struct Client;
 
 struct WorldSync {
     // Picks up the hits our player made since last frame, and notices mobys they hit disappearing
     static void on_tick(Client* client);
 
-    static void receive_hit(MPPacketMobyHit* hit);
+    static void receive_hit(MPPacketMobyHit* hit, size_t len);
     static void receive_killed(MPPacketMobyKilled* killed);
+
+    // A damage record that isn't a real hit, so it's not passed on
+    static void ignore_record(u32 index);
 
     // New level or respawn
     static void reset();

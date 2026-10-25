@@ -24,6 +24,10 @@ void _c_after_init_gameplay();
 
 void _c_moby_update(Moby* moby);
 
+bool _c_update_mobys();
+void _c_on_moby_animation_started(Moby* moby, u32 blend_frames);
+void _c_on_moby_get_damage(Moby* moby);
+
 void _c_set_ratchet_animation_duration(u32 duration);
 
 void _c_bink_do_frame();

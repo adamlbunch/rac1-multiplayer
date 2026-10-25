@@ -6,22 +6,9 @@
 
 #include <rc1/Game.h>
 
+#include "EnemySync.h"
+#include "LevelMobys.h"
 #include "network/GameClient.h"
-
-// The game records damage in a ring of 64 records. Whatever hurts a moby fills in the next record and points the
-//  moby's `damage` at it, and the moby reads it in its update.
-#define DAMAGE_RECORDS ((u8*)0xa14c00)
-#define DAMAGE_RECORD_SIZE 0x40
-#define DAMAGE_RECORD_COUNT 64
-#define DAMAGE_NEXT_RECORD (*(u32*)0xa10954)
-
-// MPMoby's update function: mobys running it are our copies of other players and their things
-#define MP_MOBY_UPDATE_FUNC ((void*)0x710ed8)
-
-// The moby table starts with the mobys placed in the level, which every game has at the same index and UID, and
-//  continues with the ones spawned while playing
-#define LEVEL_MOBYS_START (*(Moby**)0xa390a0)
-#define LEVEL_MOBYS_END (*(Moby**)0xa390a4)
 
 // How long a moby someone else destroyed gets to go away on its own (play its death) before we remove it
 #define KILL_GRACE_TICKS (60 * 3)
@@ -52,6 +39,7 @@ struct HitMoby {
 struct PendingKill {
     u16 uid;
     u16 o_class;
+    u16 index_1;    // Position in the level's moby table plus one, 0 when the sender's game didn't say
     u32 deadline;
 };
 
@@ -82,13 +70,17 @@ static bool plausible_moby(Moby* moby) {
     return address >= 0x10000 && address < 0xC0000000 && (address & 0xf) == 0;
 }
 
-// Placed in the level (as opposed to spawned while playing), so every game has it under the same UID
+// Placed in the level (as opposed to spawned while playing), so every game has it in the same place
 static bool is_level_moby(Moby* moby) {
-    return moby >= LEVEL_MOBYS_START && moby < LEVEL_MOBYS_END && moby != ratchet_moby &&
-           moby->p_update != MP_MOBY_UPDATE_FUNC;
+    return LevelMobys::index_of(moby) >= 0;
 }
 
-static Moby* find_level_moby(u16 uid, u16 o_class) {
+// By its position in the moby table, or by UID for older games that don't send it
+static Moby* find_level_moby(u16 uid, u16 o_class, u32 index_1) {
+    if (index_1 != 0) {
+        return LevelMobys::find(index_1 - 1, o_class);
+    }
+
     for (Moby* moby = LEVEL_MOBYS_START; moby < LEVEL_MOBYS_END; moby++) {
         if (moby->state >= 0 && moby->uid == uid && moby->o_class == o_class) {
             return moby;
@@ -96,6 +88,10 @@ static Moby* find_level_moby(u16 uid, u16 o_class) {
     }
 
     return nullptr;
+}
+
+static u16 level_index(Moby* moby) {
+    return moby - LEVEL_MOBYS_START;
 }
 
 static void remember_hit(Moby* moby) {
@@ -158,13 +154,19 @@ static void send_record(Client* client, u8* record) {
         return;
     }
 
-    // The level hurting itself (enemies, hazards, a crate's blast) happens in every game on its own. When it's set
-    //  off by another player's hit, like a stack of crates they knocked over, what it destroys is theirs as well.
+    // The level hurting itself (hazards, a crate's blast) happens in every game on its own, apart from what the
+    //  enemies we run do (see EnemySync). When it's set off by another player's hit, like a stack of crates they
+    //  knocked over, what it destroys is theirs as well.
+    bool from_enemy = false;
     if (plausible_moby(source) && is_level_moby(source)) {
-        if (is_remote_hit(source)) {
-            remember_remote_hit(target);
+        if (!EnemySync::is_owned(source)) {
+            if (is_remote_hit(source)) {
+                remember_remote_hit(target);
+            }
+            return;
         }
-        return;
+
+        from_enemy = true;
     }
 
     // Our hit is the latest on it now, so whatever it drops is ours
@@ -182,6 +184,9 @@ static void send_record(Client* client, u8* record) {
     MPPacketMobyHit* hit = (MPPacketMobyHit*)packet->body;
     hit->uid = target->uid;
     hit->o_class = target->o_class;
+    hit->index = level_index(target);
+    hit->source_index = from_enemy ? level_index(source) : 0;
+    hit->source_o_class = from_enemy ? source->o_class : 0xffff;
     memcpy(&hit->vector0, record + 0x00, sizeof(Vec4));
     memcpy(&hit->vector1, record + 0x10, sizeof(Vec4));
     memcpy(&hit->flags, record + 0x24, sizeof(u32));
@@ -194,7 +199,7 @@ static void send_record(Client* client, u8* record) {
     client->send_ack(packet);
 
     if (target->state < 0) {
-        client->send_ack(Packet::make_moby_killed_packet(target->uid, target->o_class));
+        client->send_ack(Packet::make_moby_killed_packet(target->uid, target->o_class, level_index(target)));
     } else {
         remember_hit(target);
     }
@@ -209,7 +214,7 @@ static void check_hit_mobys(Client* client) {
 
         Moby* moby = hit->moby;
         if (moby->state < 0 || moby->uid != hit->uid || moby->o_class != hit->o_class) {
-            client->send_ack(Packet::make_moby_killed_packet(hit->uid, hit->o_class));
+            client->send_ack(Packet::make_moby_killed_packet(hit->uid, hit->o_class, level_index(moby)));
             hit->moby = nullptr;
             continue;
         }
@@ -227,7 +232,7 @@ static void apply_pending_kills() {
             continue;
         }
 
-        Moby* moby = find_level_moby(kill->uid, kill->o_class);
+        Moby* moby = find_level_moby(kill->uid, kill->o_class, kill->index_1);
         if (moby == nullptr) {
             kill->o_class = 0xffff;
             continue;
@@ -324,15 +329,23 @@ void WorldSync::on_tick(Client* client) {
     remove_remote_hit_bolts();
 }
 
-void WorldSync::receive_hit(MPPacketMobyHit* hit) {
-    Moby* target = find_level_moby(hit->uid, hit->o_class);
+void WorldSync::receive_hit(MPPacketMobyHit* hit, size_t len) {
+    bool has_index = len >= sizeof(MPPacketMobyHit);
+
+    Moby* target = find_level_moby(hit->uid, hit->o_class, has_index ? hit->index + 1 : 0);
     if (target == nullptr) {
         return;
     }
 
-    // Whoever made the hit: their copy in our game if we have it
-    GameClient* client = (GameClient*)Game::shared().client();
-    Moby* source = client != nullptr ? client->moby_for_uuid(hit->sender) : nullptr;
+    // Whoever made the hit: the enemy that did, or the player's copy in our game if we have it
+    Moby* source = nullptr;
+    if (has_index && hit->source_o_class != 0xffff) {
+        source = LevelMobys::find(hit->source_index, hit->source_o_class);
+    } else {
+        GameClient* client = (GameClient*)Game::shared().client();
+        source = client != nullptr ? client->moby_for_uuid(hit->sender) : nullptr;
+    }
+
     if (source == nullptr) {
         source = ratchet_moby;
     }
@@ -387,7 +400,8 @@ void WorldSync::receive_killed(MPPacketMobyKilled* killed) {
     PendingKill* free_slot = nullptr;
     for (int i = 0; i < MAX_PENDING_KILLS; i++) {
         PendingKill* kill = &pending_kills_[i];
-        if (kill->o_class != 0xffff && kill->uid == killed->uid && kill->o_class == killed->o_class) {
+        if (kill->o_class != 0xffff && kill->uid == killed->uid && kill->o_class == killed->o_class &&
+            kill->index_1 == killed->index_1) {
             return;
         }
 
@@ -399,8 +413,13 @@ void WorldSync::receive_killed(MPPacketMobyKilled* killed) {
     if (free_slot != nullptr) {
         free_slot->uid = killed->uid;
         free_slot->o_class = killed->o_class;
+        free_slot->index_1 = killed->index_1;
         free_slot->deadline = ticks_ + KILL_GRACE_TICKS;
     }
+}
+
+void WorldSync::ignore_record(u32 index) {
+    injected_ |= 1ULL << (index % DAMAGE_RECORD_COUNT);
 }
 
 void WorldSync::reset() {

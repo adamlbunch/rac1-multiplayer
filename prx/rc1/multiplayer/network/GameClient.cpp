@@ -15,6 +15,7 @@
 
 #include "../Mirror.h"
 #include "../WorldSync.h"
+#include "../EnemySync.h"
 #include "../GadgetModels.h"
 
 GameClient::GameClient(char *ip, int port) : Client(ip, port) {
@@ -55,6 +56,7 @@ void GameClient::reset() {
     clear_hybrid_mobys();
     moby_delete_all();
     WorldSync::reset();
+    EnemySync::reset();
 
     for (size_t i = 0; i < monitored_addresses_.size(); i++) {
         delete monitored_addresses_[i];
@@ -864,12 +866,15 @@ bool GameClient::update(MPPacketHeader *header, void *packet_data) {
                 break;
             case MP_PACKET_MOBY_HIT:
                 // Not acked, so the server sends it again until we're back in control to apply it
-                if (game_state != PlayerControl || header->size < sizeof(MPPacketMobyHit)) return false;
-                WorldSync::receive_hit((MPPacketMobyHit*)packet_data);
+                if (game_state != PlayerControl || header->size < MP_MOBY_HIT_V14_SIZE) return false;
+                WorldSync::receive_hit((MPPacketMobyHit*)packet_data, header->size);
                 break;
             case MP_PACKET_MOBY_KILLED:
                 if (game_state != PlayerControl || header->size < sizeof(MPPacketMobyKilled)) return false;
                 WorldSync::receive_killed((MPPacketMobyKilled*)packet_data);
+                break;
+            case MP_PACKET_ENEMY_STATE:
+                EnemySync::receive((MPPacketEnemyState*)packet_data, header->size);
                 break;
             default:
                 Logger::error("Received %ld bytes of unknown packet %d:", received(), header->type);
@@ -960,6 +965,7 @@ void GameClient::on_tick() {
     if (connection_complete_) {
         Mirror::on_tick();
         WorldSync::on_tick(Game::shared().connected_client());
+        EnemySync::on_tick(Game::shared().connected_client());
     }
 
     {

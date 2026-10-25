@@ -21,6 +21,7 @@
 #include "rc1/game/GoldBolt.h"
 #include "rc1/views/ServerListView.h"
 #include "rc1/multiplayer/WorldSync.h"
+#include "rc1/multiplayer/EnemySync.h"
 
 // For whatever dumb reason I can't get the compiler to include
 //  .cpp files under /lib/, so it's defined here.
@@ -193,6 +194,7 @@ void Game::before_player_spawn() {
         ((GameClient*)client())->moby_clear_all();
         ((GameClient*)client())->refresh_hybrid_mobys();
         WorldSync::reset();
+        EnemySync::reset();
 
         if (last_planet_ != current_planet) {
             last_planet_ = current_planet;

@@ -12,6 +12,7 @@
 #include <rc1/rc1.h>
 #include <rc1/game/Moby.h>
 
+#include "MobyAnimation.h"
 #include "network/Packet.h"
 
 struct Client;
@@ -29,13 +30,6 @@ struct MirrorSnapshot {
     u8 n_manipulators;
     MPMirrorManipulator manipulators[MP_MIRROR_MAX_MANIPULATORS];
     MPMirrorMoby attachment[MP_MIRROR_ATTACHMENT_SLOTS];
-};
-
-// The animation we last started on a copy, to tell a new animation from one already playing
-struct MirrorAnimation {
-    bool valid;
-    u8 seq;
-    u8 restarts;
 };
 
 struct RemotePlayer {
@@ -77,6 +71,9 @@ struct Mirror {
 
     // Whether snapshots are positioning this player's hero, so regular moby updates should leave it alone
     static bool is_mirrored(u16 uuid);
+
+    // How far the nearest other player we're showing is from `position`, squared. Huge if there's nobody.
+    static float nearest_player_distance_sq(const Vec4* position);
 
     // A player's hero moby was deleted
     static void forget(u16 uuid);
