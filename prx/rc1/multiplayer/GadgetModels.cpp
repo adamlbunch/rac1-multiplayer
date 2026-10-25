@@ -4,13 +4,26 @@
 
 #include "GadgetModels.h"
 
-#include <sys/memory.h>
+#include <sys/syscall.h>
 
 #include <rc1/rc1.h>
 
 #include "MPMoby.h"
 
 extern "C" int32_t cellGcmMapMainMemory(const void* address, uint32_t size, uint32_t* offset);
+
+// sys/memory.h clashes with the game functions rc1.h declares, so call the system directly
+#define SYS_MEMORY_PAGE_SIZE_1M 0x400ULL
+
+static int memory_allocate(uint64_t size, uint64_t flags, uint32_t* address) {
+    system_call_3(348, size, flags, (uint32_t)address);
+    return_to_user_prog(int);
+}
+
+static int memory_free(uint32_t address) {
+    system_call_1(349, address);
+    return_to_user_prog(int);
+}
 
 // The game's table of gadget models it swaps in and out: their moby class, where the model sits in memory and its size,
 //  and the textures for each (16 per model, -1 for none)
@@ -72,8 +85,8 @@ static bool prepare_memory() {
         return memory_ != nullptr;
     }
 
-    sys_addr_t address = 0;
-    int err = sys_memory_allocate(MODEL_MEMORY_SIZE, SYS_MEMORY_PAGE_SIZE_1M, &address);
+    uint32_t address = 0;
+    int err = memory_allocate(MODEL_MEMORY_SIZE, SYS_MEMORY_PAGE_SIZE_1M, &address);
     if (err != 0) {
         Logger::error("GadgetModels: couldn't allocate memory: 0x%08x", err);
         memory_failed_ = true;
@@ -83,7 +96,7 @@ static bool prepare_memory() {
     err = cellGcmMapMainMemory((void*)address, MODEL_MEMORY_SIZE, &gpu_offset_);
     if (err != 0) {
         Logger::error("GadgetModels: couldn't map memory for the GPU: 0x%08x", err);
-        sys_memory_free(address);
+        memory_free(address);
         memory_failed_ = true;
         return false;
     }
