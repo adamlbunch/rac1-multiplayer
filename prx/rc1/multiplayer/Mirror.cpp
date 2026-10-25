@@ -447,6 +447,13 @@ static void apply_animation(Moby* moby, MPMirrorMoby* state, MirrorAnimation* ap
     memcpy(m + 0x5c, &state->anim_rate, sizeof(float));
     m[0x70] = state->anim_flags;
 
+    // While the sender blends into an animation, its own code moves the blend along bit by bit. The game's
+    //  animation step would finish our blend in one go, so keep it off the copy until the sender's blend is done.
+    if (state->anim_prev_seq == 0xff && m[0x52] == 0xff) {
+        float stopped = 0.0f;
+        memcpy(m + 0x5c, &stopped, sizeof(float));
+    }
+
     // Points the moby at the frame data for the frames we just set
     moby_frame_data_something(moby);
 }

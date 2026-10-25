@@ -435,7 +435,7 @@ typedef struct {
 //  packet is split into several with the same `frame`.
 #define MP_MIRROR_SLOT_HERO          0xff
 #define MP_MIRROR_ATTACHMENT_SLOTS   14  // 7 gadget slots on the player, 2 mobys each
-#define MP_MIRROR_MAX_MANIPULATORS   6
+#define MP_MIRROR_MAX_MANIPULATORS   7  // Most that fit with the hero in a packet's own buffer
 
 typedef struct {
     u16 sender;           // Filled in by the server with the ID the receiving game has for the sender's hero moby
