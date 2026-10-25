@@ -20,6 +20,7 @@
 #include "rc1/utils/PersistentStorage.h"
 #include "rc1/game/GoldBolt.h"
 #include "rc1/views/ServerListView.h"
+#include "rc1/multiplayer/WorldSync.h"
 
 // For whatever dumb reason I can't get the compiler to include
 //  .cpp files under /lib/, so it's defined here.
@@ -140,7 +141,9 @@ void Game::on_tick() {
     }
 
     // Player is most likely on intro menu scene. Present and handle multiplayer startup stuff.
-    if (current_planet == 0 && ratchet_moby == 0) {
+    //  Once connected, the server's UI (the lobby screens) lives in the client's remote view, which must stay up:
+    //  deleting it here as the game started loading lost the lobby screen's close, leaving it stuck on screen.
+    if (current_planet == 0 && ratchet_moby == 0 && !(client_ && client_->connected())) {
         if (current_view && game_state == 0) {
             delete current_view;
             current_view = 0;
@@ -189,6 +192,7 @@ void Game::before_player_spawn() {
 
         ((GameClient*)client())->moby_clear_all();
         ((GameClient*)client())->refresh_hybrid_mobys();
+        WorldSync::reset();
 
         if (last_planet_ != current_planet) {
             last_planet_ = current_planet;

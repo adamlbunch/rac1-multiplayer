@@ -350,26 +350,8 @@ Moby* spawn_moby_hook(u16 o_class) {
         case 428: // Feather (from killing chickens)
             SyncedMoby::make_synced_moby(moby)->activate();
             break;
-        case 601: // Clank Backpack
-            Player::shared().backpack_moby = RatchetAttachmentMoby::make_synced_moby(moby, 5, 5);
-            if (remove_clank_backpack == 0) {
-                Player::shared().backpack_moby->activate();
-            }
-            break;
-        case 607: // Heli pack
-        case 608: // Thruster pack
-        case 609: // Hydro pack
-            Player::shared().backpack_attachment_moby = RatchetAttachmentMoby::make_synced_moby(moby, 5, 5);
-            if (remove_clank_backpack == 0) {
-                Player::shared().backpack_attachment_moby->activate();
-            }
-            break;
-        case 1289: // O2 Mask
-        case 1290: // Pilots helmet
-        case 433:  // Sonic summoner
-            Player::shared().helmet_moby = RatchetAttachmentMoby::make_synced_moby(moby, 4, 21);
-            Player::shared().helmet_moby->activate();
-            break;
+        // Clank on the back, packs, helmets, the item in hand and so on used to be synced here one by one, and
+        //  attached to other players' bones by guesswork. They're all part of the player's snapshot now, see Mirror.
 //        case 407:  // Persuader
 //            Player::shared().persuader_moby = RatchetAttachmentMoby::make_synced_moby(moby, 5, 5);
 //        case 614:  // Map-o-matic

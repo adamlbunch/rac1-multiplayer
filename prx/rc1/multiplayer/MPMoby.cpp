@@ -9,14 +9,24 @@
 #include <rc1/Game.h>
 
 #include "Player.h"
+#include "Mirror.h"
 
 void MPMoby::update() {
+    MPMobyVars* vars = (MPMobyVars*)(this->vars);
+
+    // Copies of other players' attachments are fully driven by their snapshots
+    if (vars->flags & MP_MOBY_FLAG_MIRROR) {
+        Mirror::update_attachment(this);
+        return;
+    }
+
+    // Other players' hero mobys are placed and animated from their snapshots when we get them
+    bool mirrored = Mirror::apply_hero(this, vars->uuid);
+
     // Don't check collision for Ratchet moby, because that apparently crashes the game on console only.
     if (this->o_class != 0) {
         this->check_collision();
     }
-
-    MPMobyVars* vars = (MPMobyVars*)(this->vars);
 
     if (vars->flags & MP_MOBY_FLAG_MOVABLE_PLATFORM) {
         Vec4 delta;
@@ -103,6 +113,10 @@ void MPMoby::update() {
     }
 
     this->damage = -1;
+
+    if (mirrored) {
+        return;
+    }
 
     // Avoid players getting stuck in each other
     if (collision != nullptr &&

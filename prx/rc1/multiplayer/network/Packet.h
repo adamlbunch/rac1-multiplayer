@@ -51,7 +51,7 @@ Here is an example of how a packet with type set to MP_PACKET_MOBY_UPDATE and no
 
 #include "lib/types.h"
 
-#define MP_API_VERSION  13
+#define MP_API_VERSION  14
 
 #define MP_PACKET_CONNECT            1
 #define MP_PACKET_SYN                2
@@ -86,6 +86,9 @@ Here is an example of how a packet with type set to MP_PACKET_MOBY_UPDATE and no
 #define MP_PACKET_OPEN_DATA_STREAM    31
 #define MP_PACKET_FILE_UPLOAD         32
 #define MP_PACKET_LEVEL_CONFIGURATION 33
+#define MP_PACKET_PLAYER_STATE        34
+#define MP_PACKET_MOBY_HIT            35
+#define MP_PACKET_MOBY_KILLED         36
 
 #define MP_PACKET_FLAG_RPC           0x1
 
@@ -97,6 +100,7 @@ Here is an example of how a packet with type set to MP_PACKET_MOBY_UPDATE and no
 #define MP_MOBY_FLAG_ORIG_UDPATE_FUNC 0x4
 #define MP_MOBY_FLAG_ATTACHED_TO      0x8
 #define MP_MOBY_FLAG_MOVABLE_PLATFORM      0x10
+#define MP_MOBY_FLAG_MIRROR           0x20  // Only used locally: a moby that copies another player's attachment
 
 #define MP_CONTROLLER_FLAGS_PRESSED 1
 #define MP_CONTROLLER_FLAGS_HELD 2
@@ -279,6 +283,7 @@ typedef struct {
 #define MP_STATE_TYPE_START_IN_LEVEL_MOVIE 18
 #define MP_STATE_TYPE_SAVE_FILE_OPERATION 19
 #define MP_STATE_TYPE_STANDING_ON_MOBY 20
+#define MP_STATE_TYPE_UI_RESET 21
 
 typedef struct {
     u16 flags;
@@ -422,6 +427,89 @@ typedef struct {
     u32 value;
 } MPPacketLevelConfigurationOption;
 
+// A player's exact pose for one frame: their hero moby, the bone manipulators on it, and everything attached to
+//  them (the item in their hand, packs, helmets, boots...). The server passes it on to the other players on the
+//  level, so they can draw that player exactly like the player's own game does.
+//
+// Followed by `n_mobys` MPMirrorMoby and then `n_manipulators` MPMirrorManipulator. A frame that doesn't fit in one
+//  packet is split into several with the same `frame`.
+#define MP_MIRROR_SLOT_HERO          0xff
+#define MP_MIRROR_ATTACHMENT_SLOTS   14  // 7 gadget slots on the player, 2 mobys each
+#define MP_MIRROR_MAX_MANIPULATORS   6
+
+typedef struct {
+    u16 sender;           // Filled in by the server with the ID the receiving game has for the sender's hero moby
+    u8 n_mobys;
+    u8 n_manipulators;
+    u32 frame;            // Sender's frame counter
+    u16 attachments;      // Bit per attachment slot the sender has this frame, including ones in other parts
+    u16 pad;
+} MPPacketPlayerState;
+
+typedef struct {
+    u8 slot;              // MP_MIRROR_SLOT_HERO or an attachment slot (gadget slot * 2 + index)
+    u8 enabled;
+    u16 o_class;
+    u16 mode_bits;
+    u8 alpha;
+    u8 anim_restarts;     // Bumped every time the hero's animation is (re)started, even with the same sequence
+    float position[3];
+    float rotation[3];
+    float matrix[12];     // Rows 0-2 of the moby's transform
+    float scale;
+    u32 lights[2];
+    u32 lights2;
+    u8 anim_seq;
+    u8 anim_prev_seq;
+    u8 anim_frame0;
+    u8 anim_frame1;
+    float anim_t;
+    float anim_speed;
+    float anim_rate;
+    u8 anim_flags;
+    u8 blend_frames;      // How many frames the animation blends in over when it starts
+    u16 pad;
+} MPMirrorMoby;
+
+typedef struct {
+    u8 bone;
+    u8 state;
+    u8 scale_on;
+    u8 absolute;
+    s32 bone_id;
+    float blend_t;
+    float rotation[4];
+    float scale[3];
+    float translation[3];
+} MPMirrorManipulator;
+
+// A player's game damaged one of the level's own mobys (an enemy, a crate...). Other players' games apply the same
+//  damage to their copy of it, so it's hurt and destroyed for everyone. The layout after uid matches the game's
+//  damage records.
+typedef struct {
+    u16 sender;           // Filled in by the server, see MPPacketPlayerState
+    u16 uid;
+    u16 o_class;
+    u8 field28;
+    u8 field29;
+    u16 field2a;
+    u16 pad;
+    u32 flags;
+    float damage;
+    u32 field30;
+    Vec4 vector0;
+    Vec4 vector1;
+} MPPacketMobyHit;
+
+// One of the level's mobys a player had damaged is gone in their game. Backs up MPPacketMobyHit for kills that
+//  don't come down to damage the other games could apply.
+typedef struct {
+    u16 sender;
+    u16 uid;
+    u16 o_class;
+    u16 pad;
+} MPPacketMobyKilled;
+
 #define MP_LEVEL_CONFIG_OPTION_BLOCK_MOBY_UID   1
 #define MP_LEVEL_CONFIG_OPTION_BLOCK_OCLASS     2
 
@@ -467,6 +555,8 @@ struct Packet {
     static Packet* make_ui_event_with_text_packet(u16 event_type, u16 element_id, u32 data, const char* text);
     static Packet* make_file_upload_part_packet(u8 file_type, void* data, u32 len, u32 offset);
     static Packet* make_player_standing_on_moby_packet(u16 uuid);
+    static Packet* make_ui_reset_packet();
+    static Packet* make_moby_killed_packet(u16 uid, u16 o_class);
 };
 
 #endif

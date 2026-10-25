@@ -57,6 +57,12 @@ struct GameClient : public Client {
     bool update(MPPacketHeader* header, void* packet_data);
     void on_tick();
 
+    // The moby we have for a server ID, if it's alive
+    Moby* moby_for_uuid(u16 uuid);
+
+    // Whether the server's level scripts sync this moby of the level themselves
+    bool is_hybrid_moby(u16 uid);
+
     static int connect_callback(void* packetData, unsigned int size, void* userdata);
 private:
     char* ip_;

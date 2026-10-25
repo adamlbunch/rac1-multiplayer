@@ -7,6 +7,7 @@
 #include <rc1/bridging.h>
 #include <rc1/Game.h>
 #include "network/Packet.h"
+#include "Mirror.h"
 
 static Profiler states_timer_("player states");
 static Profiler synced_mobys_timer_("synced mobys");
@@ -57,6 +58,9 @@ void Player::on_tick() {
 
     Logger::trace("Sent update packet");
     Game::shared().client()->send(&packet);
+
+    // The exact pose, for other players to draw us with
+    Mirror::send_snapshot(client);
 
     if (client) {
         Profiler::Scope scope(&states_timer_);
@@ -125,4 +129,5 @@ void Player::on_respawned() {
 
 extern "C" void _c_set_ratchet_animation_duration(u32 duration) {
     Player::shared().ratchet_animation_duration = duration;
+    Mirror::on_hero_animation_started(duration);
 }

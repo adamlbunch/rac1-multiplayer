@@ -383,6 +383,27 @@ Packet* Packet::make_file_upload_part_packet(u8 file_type, void* data, u32 len, 
     return packet;
 }
 
+Packet* Packet::make_ui_reset_packet() {
+    Packet* packet = new Packet(sizeof(MPPacketSetState));
+    packet->header->type = MP_PACKET_SET_STATE;
+
+    MPPacketSetState* body = (MPPacketSetState*)packet->body;
+    body->state_type = MP_STATE_TYPE_UI_RESET;
+
+    return packet;
+}
+
+Packet* Packet::make_moby_killed_packet(u16 uid, u16 o_class) {
+    Packet* packet = new Packet(sizeof(MPPacketMobyKilled));
+    packet->header->type = MP_PACKET_MOBY_KILLED;
+
+    MPPacketMobyKilled* body = (MPPacketMobyKilled*)packet->body;
+    body->uid = uid;
+    body->o_class = o_class;
+
+    return packet;
+}
+
 Packet* Packet::make_player_standing_on_moby_packet(u16 uuid) {
     Packet* packet = new Packet(sizeof(MPPacketSetState));
     packet->header->type = MP_PACKET_SET_STATE;

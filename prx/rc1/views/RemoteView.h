@@ -97,6 +97,17 @@ private:
 
     TextAreaElement* profiler_text_;
 
+    // Elements the server deleted lately. Packets can arrive out of order, and a create that shows up after the
+    //  delete for the same element would put it back on screen for good.
+    struct DeletedElement {
+        u16 id;
+        int64_t time;
+    };
+    DeletedElement deleted_[32];
+    int next_deleted_;
+
+    bool recently_deleted(u16 id);
+
     ViewElement* create_element_with_type(u16 id, MPUIElementType element_type);
 };
 

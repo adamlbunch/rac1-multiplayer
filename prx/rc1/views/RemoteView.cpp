@@ -7,6 +7,9 @@
 #include <rc1/Game.h>
 
 void RemoteView::on_load() {
+    memset(deleted_, 0, sizeof(deleted_));
+    next_deleted_ = 0;
+
     memory_info_text_ = new TextElement(80, 0, "<memory>", ViewMenu);
     ping_text_ = new TextElement(0, 20, "<ping>", ViewMenu);
 //    profiler_text_ = new TextAreaElement(-70, 40, 250, 300);
@@ -123,15 +126,33 @@ void RemoteView::delete_element(u16 id) {
 }
 
 void RemoteView::clear_all() {
-    for (RemoteViewElement* current = first_element_; current != nullptr; current = current->next_element) {
-        focused_element = nullptr;
-        current->id = 0;
-        remove_element(current->element);
+    RemoteViewElement* current = first_element_;
+    while (current != nullptr) {
+        RemoteViewElement* next = current->next_element;
 
+        remove_element(current->element);
         delete current;
+
+        current = next;
     }
 
     first_element_ = nullptr;
+    focused_element = nullptr;
+
+    // The server draws everything again from scratch after clearing, possibly with the same IDs
+    memset(deleted_, 0, sizeof(deleted_));
+}
+
+bool RemoteView::recently_deleted(u16 id) {
+    int64_t now = get_time();
+
+    for (int i = 0; i < 32; i++) {
+        if (deleted_[i].time != 0 && deleted_[i].id == id && now - deleted_[i].time < 3000) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 ViewElement* RemoteView::create_element_with_type(u16 id, MPUIElementType element_type) {
@@ -193,13 +214,25 @@ void RemoteView::handle_packet(MPPacketUI* packet) {
     ViewElement* element = nullptr;
 
     if (packet->operations & MP_UI_OPERATION_CREATE) {
-        element = create_element_with_type(packet->id, (MPUIElementType)packet->element_type);
+        if (recently_deleted(packet->id)) {
+            Logger::debug("Ignoring create for UI element %d that was already deleted", packet->id);
+            return;
+        }
 
-        add_element(element);
+        // A repeated create updates the element we have instead of drawing a second one
+        element = get_element(packet->id);
+        if (element == nullptr) {
+            element = create_element_with_type(packet->id, (MPUIElementType)packet->element_type);
+            add_element(element);
+        }
     }
 
     if (packet->operations & MP_UI_OPERATION_DELETE) {
         delete_element(packet->id);
+
+        deleted_[next_deleted_].id = packet->id;
+        deleted_[next_deleted_].time = get_time();
+        next_deleted_ = (next_deleted_ + 1) % 32;
     }
 
     if (packet->operations & MP_UI_OPERATION_UPDATE) {

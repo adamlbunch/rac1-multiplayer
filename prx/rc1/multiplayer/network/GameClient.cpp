@@ -13,6 +13,9 @@
 
 #include "LevelConfigurationManager.h"
 
+#include "../Mirror.h"
+#include "../WorldSync.h"
+
 GameClient::GameClient(char *ip, int port) : Client(ip, port) {
     mobys_.resize(MAX_MP_MOBYS);
     ip_ = ip;
@@ -50,6 +53,7 @@ void GameClient::reset() {
 
     clear_hybrid_mobys();
     moby_delete_all();
+    WorldSync::reset();
 
     for (size_t i = 0; i < monitored_addresses_.size(); i++) {
         delete monitored_addresses_[i];
@@ -76,8 +80,17 @@ void GameClient::close_data_client() {
 void GameClient::create_moby(MobyInfo* moby_info) {
     Moby* moby = moby_info->moby;
 
+    // The server repeats a create until we confirm it. Replacing the moby every time made other players flicker and
+    //  start their animation over, so keep the one we have if it's what the server wants.
+    if (moby && moby->state >= 0 && moby->o_class == moby_info->o_class &&
+        !(moby_info->flags & MP_MOBY_FLAG_ATTACHED_TO)) {
+        send_ack(Packet::make_moby_create_failure_packet(moby_info->uuid, MP_MOBY_CREATE_FAILURE_REASON_SUCCESS));
+        return;
+    }
+
     if (moby && moby->state >= 0) {
         Logger::error("Replaced moby with existing UUID: %d", moby_info->uuid);
+        Mirror::forget(moby_info->uuid);
         delete_moby(moby);
     }
 
@@ -130,7 +143,7 @@ void GameClient::create_moby(MobyInfo* moby_info) {
 
 void GameClient::create_moby(MPPacketMobyCreate* packet) {
 // Check that we're not trying to create a moby beyond our predefined moby space.
-    if (packet->uuid > mobys_.capacity()) {
+    if (packet->uuid >= mobys_.capacity()) {
         Logger::error("Tried to create illegal Moby UUID: %d", packet->uuid);
         send_ack(Packet::make_moby_create_failure_packet(packet->uuid, MP_MOBY_CREATE_FAILURE_REASON_MAX_MOBYS));
 
@@ -159,7 +172,7 @@ void GameClient::create_moby(MPPacketMobyCreate* packet) {
 
 void GameClient::update_moby(MPPacketMobyUpdate* packet) {
     // Check that we're not trying to update a moby beyond our predefined moby space.
-    if (packet->uuid > mobys_.capacity()) {
+    if (packet->uuid >= mobys_.capacity()) {
         Logger::error("Tried to update illegal Moby UUID: %d", packet->uuid);
         return;
     }
@@ -187,6 +200,7 @@ void GameClient::update_moby(MPPacketMobyUpdate* packet) {
 
         Moby* old = moby;
 
+        Mirror::forget(packet->uuid);
         delete_moby(moby);
         moby_info->o_class = packet->o_class;
         moby_info->moby = nullptr;
@@ -239,6 +253,11 @@ void GameClient::update_moby(MPPacketMobyUpdate* packet) {
     }
 
     MPMobyVars* vars = (MPMobyVars*)moby->vars;
+
+    // The player's own snapshots place and animate it exactly, see Mirror
+    if (Mirror::is_mirrored(packet->uuid)) {
+        return;
+    }
 
     if (!vars->attached_to_parent) {
         moby->position.x = packet->x;
@@ -321,6 +340,12 @@ void GameClient::moby_delete(MPPacketMobyDelete* packet) {
     Logger::trace("Deleting moby %d", packet->value);
 
     if (packet->flags & MP_MOBY_DELETE_FLAG_UUID) {
+        if (packet->value >= mobys_.capacity()) {
+            return;
+        }
+
+        Mirror::forget(packet->value);
+
         MobyInfo* moby_info = &mobys_[packet->value];
         Moby* moby = moby_info->moby;
 
@@ -343,12 +368,39 @@ void GameClient::moby_delete(MPPacketMobyDelete* packet) {
 }
 
 void GameClient::moby_clear_all() {
+    Mirror::reset();
+
     for(int i = 0; i < mobys_.size(); i++) {
         mobys_[i].moby = nullptr;
     }
 }
 
+Moby* GameClient::moby_for_uuid(u16 uuid) {
+    if (uuid == 0 || uuid >= mobys_.capacity()) {
+        return nullptr;
+    }
+
+    MobyInfo* moby_info = &mobys_[uuid];
+    if (moby_info->uuid != uuid || moby_info->moby == nullptr || moby_info->moby->state < 0) {
+        return nullptr;
+    }
+
+    return moby_info->moby;
+}
+
+bool GameClient::is_hybrid_moby(u16 uid) {
+    for (size_t i = 0; i < hybrid_mobys_.size(); i++) {
+        if (hybrid_mobys_[i]->uid == uid) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void GameClient::moby_delete_all() {
+    Mirror::reset();
+
     for(int i = 0; i < mobys_.size(); i++) {
         MobyInfo* moby_info = &mobys_[i];
         Moby* moby = moby_info->moby;
@@ -793,6 +845,18 @@ bool GameClient::update(MPPacketHeader *header, void *packet_data) {
             case MP_PACKET_LEVEL_CONFIGURATION:
                 update_level_configuration((MPPacketSetLevelConfiguration*)packet_data);
                 break;
+            case MP_PACKET_PLAYER_STATE:
+                Mirror::receive((MPPacketPlayerState*)packet_data, header->size);
+                break;
+            case MP_PACKET_MOBY_HIT:
+                // Not acked, so the server sends it again until we're back in control to apply it
+                if (game_state != PlayerControl || header->size < sizeof(MPPacketMobyHit)) return false;
+                WorldSync::receive_hit((MPPacketMobyHit*)packet_data);
+                break;
+            case MP_PACKET_MOBY_KILLED:
+                if (game_state != PlayerControl || header->size < sizeof(MPPacketMobyKilled)) return false;
+                WorldSync::receive_killed((MPPacketMobyKilled*)packet_data);
+                break;
             default:
                 Logger::error("Received %ld bytes of unknown packet %d:", received(), header->type);
                 Logger::error("> Advertised size: %d", sizeof(MPPacketHeader) + header->size);
@@ -866,9 +930,22 @@ void GameClient::on_tick() {
         Client::on_tick();
     }
 
-    if (!remote_view_) {
+    if (!remote_view_ || (connected() && Game::shared().current_view != remote_view_)) {
+        bool lost_ui = remote_view_ != nullptr;
+
         remote_view_ = new RemoteView();
         Game::shared().transition_to(remote_view_);
+
+        // Our UI was thrown away (the title screen deleted it while the game was starting), so the server's menus
+        //  and nametags are gone too. Have the server draw them again rather than leave whatever it closed meanwhile.
+        if (lost_ui && connection_complete_) {
+            send_ack(Packet::make_ui_reset_packet());
+        }
+    }
+
+    if (connection_complete_) {
+        Mirror::on_tick();
+        WorldSync::on_tick(Game::shared().connected_client());
     }
 
     {
