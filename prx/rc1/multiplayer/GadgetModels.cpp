@@ -4,19 +4,9 @@
 
 #include "GadgetModels.h"
 
-#include <sys/syscall.h>
-
 #include <rc1/rc1.h>
 
 #include "MPMoby.h"
-
-// sys/memory.h clashes with the game functions rc1.h declares, so call the system directly
-#define SYS_MEMORY_PAGE_SIZE_1M 0x400ULL
-
-static int memory_allocate(uint64_t size, uint64_t flags, uint32_t* address) {
-    system_call_3(348, size, flags, (uint32_t)address);
-    return_to_user_prog(int);
-}
 
 
 // The game's table of gadget models it swaps in and out: their moby class, where the model sits in memory and its size,
@@ -36,8 +26,14 @@ static int memory_allocate(uint64_t size, uint64_t flags, uint32_t* address) {
 #define CLASS_SLOT_COUNT 0x800
 #define CLASS_TABLE ((MobyClass**)0xa34c00)
 
-#define OWNERS 2
-#define MODEL_MEMORY_SIZE 0x100000  // 4 buffers, in a 1MB page
+// The level's memory, which the game allocates from the bottom up: start, next free byte, end
+#define LEVEL_HEAP (*(u32**)0xa1091c)
+
+// Memory for the models has to be in the part of memory the GPU can read, like the level's. We take it from the top
+//  of the level's memory, which is left unused, and only if plenty is left for the game.
+#define OWNERS 1
+#define MODEL_MEMORY_SIZE (OWNERS * 2 * GADGET_BUFFER_SIZE)
+#define HEAP_LEFT_FOR_GAME 0x40000
 
 struct ModelBuffer {
     bool loaded;
@@ -45,7 +41,9 @@ struct ModelBuffer {
 };
 
 static u8* memory_ = nullptr;
-static bool memory_failed_ = false;
+static u32* heap_ = nullptr;        // The level memory we took ours from, and its end after we did
+static u32 heap_end_ = 0;
+static u32 failed_heap_end_ = 0;    // Level memory that didn't have room for ours
 static ModelBuffer buffers_[OWNERS * 2];
 static int current_[OWNERS];
 
@@ -68,25 +66,38 @@ bool GadgetModels::is_gadget(u16 o_class) {
     return gadget_index(o_class) >= 0;
 }
 
-// Memory of our own for models. The SPU jobs that process models find their data from offsets the game works out
-//  from the start of its memory, which come out right for any address with 32 bit wraparound.
 static bool prepare_memory() {
-    if (memory_ != nullptr || memory_failed_) {
-        return memory_ != nullptr;
-    }
-
-    uint32_t address = 0;
-    int err = memory_allocate(MODEL_MEMORY_SIZE, SYS_MEMORY_PAGE_SIZE_1M, &address);
-    if (err != 0) {
-        Logger::error("GadgetModels: couldn't allocate memory: 0x%08x", err);
-        memory_failed_ = true;
+    u32* heap = LEVEL_HEAP;
+    if (heap == nullptr) {
         return false;
     }
 
-    memory_ = (u8*)address;
+    // Still the level we took memory from. A new level sets its memory up from scratch, and ours with it.
+    if (memory_ != nullptr && heap == heap_ && heap[2] == heap_end_ && (u32)memory_ == heap_end_) {
+        return true;
+    }
+
+    memory_ = nullptr;
     memset(buffers_, 0, sizeof(buffers_));
 
-    Logger::info("GadgetModels: memory at 0x%08x", address);
+    u32 next_free = heap[1];
+    u32 end = heap[2];
+    if (end == failed_heap_end_ || end < next_free || end - next_free < MODEL_MEMORY_SIZE + HEAP_LEFT_FOR_GAME) {
+        if (end != failed_heap_end_) {
+            Logger::error("GadgetModels: not enough level memory for other players' weapons (0x%08x free)", end - next_free);
+        }
+        failed_heap_end_ = end;
+        return false;
+    }
+
+    u32 start = (end - MODEL_MEMORY_SIZE) & ~0x7f;
+    heap[2] = start;
+
+    heap_ = heap;
+    heap_end_ = start;
+    memory_ = (u8*)start;
+
+    Logger::info("GadgetModels: memory at 0x%08x", start);
     return true;
 }
 
