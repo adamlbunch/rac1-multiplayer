@@ -129,6 +129,18 @@ static void remember_hit(Moby* moby) {
     slot->last_hit_tick = ticks_;
 }
 
+static void remember_remote_hit(Moby* target);
+
+static bool is_remote_hit(Moby* moby) {
+    for (int i = 0; i < MAX_REMOTE_HITS; i++) {
+        if (remote_hits_[i].moby == moby) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static void forget_remote_hit(Moby* moby) {
     for (int i = 0; i < MAX_REMOTE_HITS; i++) {
         if (remote_hits_[i].moby == moby) {
@@ -146,17 +158,21 @@ static void send_record(Client* client, u8* record) {
         return;
     }
 
+    // The level hurting itself (enemies, hazards, a crate's blast) happens in every game on its own. When it's set
+    //  off by another player's hit, like a stack of crates they knocked over, what it destroys is theirs as well.
+    if (plausible_moby(source) && is_level_moby(source)) {
+        if (is_remote_hit(source)) {
+            remember_remote_hit(target);
+        }
+        return;
+    }
+
     // Our hit is the latest on it now, so whatever it drops is ours
     forget_remote_hit(target);
 
     // The server's level scripts already sync these
     GameClient* game_client = (GameClient*)client;
     if (game_client->is_hybrid_moby(target->uid)) {
-        return;
-    }
-
-    // The level hurting itself (enemies, hazards) happens in every game on its own
-    if (plausible_moby(source) && source->state >= 0 && is_level_moby(source)) {
         return;
     }
 
@@ -342,7 +358,11 @@ void WorldSync::receive_hit(MPPacketMobyHit* hit) {
 
     injected_ |= 1ULL << index;
 
-    // Theirs is the latest hit on it now
+    remember_remote_hit(target);
+}
+
+// Another player's hit is the latest on this moby now
+static void remember_remote_hit(Moby* target) {
     RemoteHit* slot = &remote_hits_[0];
     for (int i = 0; i < MAX_REMOTE_HITS; i++) {
         if (remote_hits_[i].moby == target) {
