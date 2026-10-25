@@ -22,7 +22,7 @@ jobs:
 
       - name: Set PS3_SDK path
         run: |
-          $workspacePath = "${{ github.workspace }}" -replace '\', '/'
+          $workspacePath = $env:GITHUB_WORKSPACE.Replace([char]92, [char]47)
           echo "PS3_SDK=$workspacePath/PS3_SDK/cell" | Out-File -FilePath $env:GITHUB_ENV -Append
         shell: pwsh
 
