@@ -587,7 +587,7 @@ void GameClient::register_hybrid_moby(MPPacketRegisterHybridMoby* packet) {
         return;
     }
 
-    HybridMoby* hybrid_moby;
+    HybridMoby* hybrid_moby = nullptr;
 
     for (size_t i = 0; i < hybrid_mobys_.size(); i++) {
         if (hybrid_mobys_[i]->uid == packet->moby_uid) {
@@ -598,9 +598,8 @@ void GameClient::register_hybrid_moby(MPPacketRegisterHybridMoby* packet) {
 
     if (hybrid_moby == nullptr) {
         hybrid_moby = new HybridMoby(native_moby, packet->moby_uid);
+        hybrid_mobys_.push_back(hybrid_moby);
     }
-
-    hybrid_mobys_.push_back(hybrid_moby);
 
     for (size_t i = 0; i < packet->n_monitored_attributes + packet->n_monitored_pvars; i++) {
         MPPacketMonitorValue* monitor_value = (MPPacketMonitorValue*)((char*)packet + sizeof(MPPacketRegisterHybridMoby)
