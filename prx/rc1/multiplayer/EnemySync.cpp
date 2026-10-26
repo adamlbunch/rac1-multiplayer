@@ -48,6 +48,10 @@ typedef void (*MobyUpdateFunction)(Moby*);
 //  forth while players are about as near
 #define CLAIM_MARGIN 4.0f
 
+// Only players this near an enemy take it over from another game. Far off, it makes no difference who runs it, and
+//  the distances other games report of it are too old to go by when it moves fast.
+#define CLAIM_RADIUS 60.0f
+
 // Players about this near to an enemy are as near, and the games' ranks settle which one runs it
 #define TIE_DISTANCE 0.5f
 
@@ -599,7 +603,8 @@ static void after_transform(Moby* moby) {
 
         // Another game runs it. Once our player is clearly nearer than theirs, ask that game to hand it over, so its
         //  AI picks up here from exactly where it left off there.
-        if (distance + CLAIM_MARGIN < enemy->owner_distance && ticks_ - enemy->claim_tick >= CLAIM_INTERVAL) {
+        if (distance < CLAIM_RADIUS && distance + CLAIM_MARGIN < enemy->owner_distance &&
+            ticks_ - enemy->claim_tick >= CLAIM_INTERVAL) {
             enemy->claim_tick = ticks_;
 
             MPEnemyState claim;
