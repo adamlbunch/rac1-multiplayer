@@ -183,19 +183,19 @@ static void send(Client* client, MPSoundEvent* events, int count, bool reliable)
     for (int sent = 0; sent < count; sent += per_packet) {
         int n = count - sent > per_packet ? per_packet : count - sent;
 
-        Packet packet = Packet(sizeof(MPPacketSounds) + n * sizeof(MPSoundEvent));
-        packet.header->type = MP_PACKET_SOUNDS;
-        packet.retain_after_send = true;
+        // A stop that gets lost would leave the sound playing in the other game for good, so those are sent until
+        //  they arrive. The client keeps those packets until then, and deletes them after.
+        Packet* packet = new Packet(sizeof(MPPacketSounds) + n * sizeof(MPSoundEvent));
+        packet->header->type = MP_PACKET_SOUNDS;
 
-        MPPacketSounds* body = (MPPacketSounds*)packet.body;
+        MPPacketSounds* body = (MPPacketSounds*)packet->body;
         body->n_sounds = n;
         memcpy((u8*)body + sizeof(MPPacketSounds), events + sent, n * sizeof(MPSoundEvent));
 
-        // A stop that gets lost would leave the sound playing in the other game for good
         if (reliable) {
-            client->send_ack(&packet);
+            client->send_ack(packet);
         } else {
-            client->send(&packet);
+            client->send(packet);
         }
     }
 }

@@ -39,6 +39,22 @@
 
 #define MAX_OUTGOING 32
 
+// A mover only takes on another game's state once it has run this many frames here, so it has set itself up
+#define SETTLE_FRAMES 30
+
+// Of the variables that didn't change since we first saw a mover, this many go with each state, in turn, so ones it
+//  changed before that get there too
+#define ROTATING_WORDS 8
+
+// Bolts are each player's own
+#define BOLT_O_CLASS 13
+#define BIG_BOLT_O_CLASS 14
+
+// Our player's memory: a moby whose variables point here (or at our player's moby) is doing something with our
+//  player, like a bolt flying at them, and only makes sense in this game
+#define PLAYER_DATA_START 0x969ce0
+#define PLAYER_DATA_END 0x96d000
+
 // The level's memory, which the game allocates from the bottom up: start, next free byte, end
 #define LEVEL_HEAP (*(u32**)0xa1091c)
 
@@ -57,6 +73,10 @@ struct Mover {
     u16 sender;
     float sender_distance;
     u32 received_tick;
+
+    // Frames it ran here, up to SETTLE_FRAMES, and which of its variables we send in turn next
+    u8 settled;
+    u16 next_word;
 
     // A state of it from that game, to put it in at that game's frame we show
     bool pending;
@@ -117,6 +137,24 @@ static bool looks_like_pointer(u32 value) {
 
     u32* heap = LEVEL_HEAP;
     return heap != nullptr && value >= heap[0] && value < heap[2] + 0x100000;
+}
+
+// Whether its variables point at our player: what it's doing then is about this game only
+static bool involves_player(Moby* moby, u16 vars_size) {
+    u8* vars = (u8*)moby->vars;
+    for (u16 offset = 0; vars != nullptr && offset + 4 <= vars_size; offset += 4) {
+        u32 value;
+        memcpy(&value, vars + offset, 4);
+        if (value == (u32)ratchet_moby || (value >= PLAYER_DATA_START && value < PLAYER_DATA_END)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool syncable_class(Moby* moby) {
+    return moby->o_class != BOLT_O_CLASS && moby->o_class != BIG_BOLT_O_CLASS;
 }
 
 // How much of the memory at `vars` is the moby's own: up to the next moby's variables
@@ -208,7 +246,16 @@ static bool sent_by_other(Mover* mover, float distance) {
 
 void MoverSync::before_update(Moby* moby, int index) {
     Mover* mover = find_mover(index);
-    if (mover == nullptr || !mover->pending || moby->o_class != (short)mover->o_class) {
+    if (mover == nullptr || moby->o_class != (short)mover->o_class) {
+        return;
+    }
+
+    if (mover->settled < SETTLE_FRAMES) {
+        mover->settled += 1;
+        return;
+    }
+
+    if (!mover->pending) {
         return;
     }
 
@@ -220,6 +267,12 @@ void MoverSync::before_update(Moby* moby, int index) {
 
     mover->pending = false;
 
+    if (involves_player(moby, mover->vars_size)) {
+        return;
+    }
+
+    // Where it is, its animation and its variables. Not its own state: its code may need to have set things up
+    //  here on its way into it.
     MPEnemyState* state = &mover->state;
     moby->position.x = state->position[0];
     moby->position.y = state->position[1];
@@ -229,9 +282,6 @@ void MoverSync::before_update(Moby* moby, int index) {
     moby->rotation.z = state->rotation[2];
     moby->scale = state->scale;
     moby->alpha = state->alpha;
-    if (state->state < 0x80) {
-        moby->state = state->state;
-    }
 
     MobyAnimation::apply(moby, &state->anim, &mover->animation, false);
 
@@ -298,6 +348,27 @@ static void queue_state(Mover* mover, Moby* moby, float distance) {
         }
     }
 
+    // And a few of the others in turn
+    u16 n_vars = mover->vars_size / 4;
+    for (int i = 0; vars != nullptr && i < ROTATING_WORDS && n_vars > 0 && n_words < MAX_WORDS; i++) {
+        u16 word = mover->next_word % n_vars;
+        mover->next_word = (mover->next_word + 1) % n_vars;
+        if (mover->changed[word / 32] & (1u << (word % 32))) {
+            continue;
+        }
+
+        u32 value;
+        memcpy(&value, vars + word * 4, 4);
+        if (looks_like_pointer(value)) {
+            continue;
+        }
+
+        out->words[n_words].offset = word * 4;
+        out->words[n_words].pad = 0;
+        out->words[n_words].value = value;
+        n_words += 1;
+    }
+
     out->head.n_words = n_words;
     out->head.pad = 0;
     n_outgoing_ += 1;
@@ -305,7 +376,7 @@ static void queue_state(Mover* mover, Moby* moby, float distance) {
 
 void MoverSync::after_update(Moby* moby, int index, float distance) {
     u16 uid, spawn;
-    if (moby->state < 0 || !SpawnedMobys::identify(moby, &uid, &spawn) || spawn != 0) {
+    if (moby->state < 0 || !syncable_class(moby) || !SpawnedMobys::identify(moby, &uid, &spawn) || spawn != 0) {
         return;
     }
 
@@ -333,7 +404,7 @@ void MoverSync::after_update(Moby* moby, int index, float distance) {
 
     u32 frame = EnemySync::frame();
     int interval = others_sq < NEAR_RADIUS * NEAR_RADIUS ? SEND_INTERVAL_NEAR : SEND_INTERVAL_FAR;
-    if ((frame + index) % interval == 0) {
+    if ((frame + index) % interval == 0 && !involves_player(moby, mover->vars_size)) {
         queue_state(mover, moby, distance);
     }
 }
@@ -424,7 +495,7 @@ void MoverSync::receive(MPPacketMovers* packet, size_t len) {
         data += size;
 
         Moby* moby = LevelMobys::find(head->moby.uid, head->moby.o_class);
-        if (moby == nullptr || moby->state < 0) {
+        if (moby == nullptr || moby->state < 0 || !syncable_class(moby)) {
             continue;
         }
 
