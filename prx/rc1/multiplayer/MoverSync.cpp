@@ -899,6 +899,19 @@ static void send_movers(Client* client, OutgoingMover* outgoing, int n_outgoing,
     }
 }
 
+int MoverSync::remote_indexes(u16* out, int max) {
+    int n = 0;
+    for (int i = 0; i < MAX_MOVERS && n < max; i++) {
+        Mover* mover = &movers_[i];
+        if (mover->used && (mover->pending_transition ||
+                            (mover->sender != 0 && ticks_ - mover->received_tick < SENDER_TIMEOUT))) {
+            out[n++] = mover->index;
+        }
+    }
+
+    return n;
+}
+
 void MoverSync::send(u32 frame) {
     Client* client = Game::shared().connected_client();
     if (client != nullptr) {

@@ -40,6 +40,11 @@ struct MoverSync {
     // Sends what was queued this frame, after the loop
     static void send(u32 frame);
 
+    // Our moby table indexes of the movers another game is keeping in step for us now, up to `max`: they run here
+    //  wherever they are, like the enemies other games run, so one that went off towards that game's player (a
+    //  critter it woke up) doesn't stay behind out of our reach
+    static int remote_indexes(u16* out, int max);
+
     static void receive(MPPacketMovers* packet, size_t len);
     static void on_tick();
 

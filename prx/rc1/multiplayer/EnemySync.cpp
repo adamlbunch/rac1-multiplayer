@@ -869,7 +869,29 @@ static void after_transform(Moby* moby) {
 
 // The game only runs the mobys near the camera, and those that always run. The enemies another game runs are kept in
 //  step wherever they are: one that wandered off from where it is here, towards our player there, shows up where it
-//  is there instead of staying behind out of sight. Their own update doesn't run here anyway.
+//  is there instead of staying behind out of sight. Their own update doesn't run here anyway. So are the movers
+//  another game keeps in step for us (see MoverSync::remote_indexes).
+static Moby* add_to_list(Moby* list, Moby** last, u8* listed, int index) {
+    if (index < 0 || index >= MAX_LEVEL_MOBYS || (listed[index / 8] & (1 << (index % 8)))) {
+        return list;
+    }
+
+    Moby* moby = LEVEL_MOBYS_START + index;
+    if (moby >= moby_ptr_end || moby->state < 0 || (moby->mode_bits & MODE_HIDDEN)) {
+        return list;
+    }
+
+    moby->p_chain = nullptr;
+    if (*last == nullptr) {
+        list = moby;
+    } else {
+        (*last)->p_chain = moby;
+    }
+    *last = moby;
+    listed[index / 8] |= 1 << (index % 8);
+    return list;
+}
+
 static Moby* add_remote_enemies(Moby* list) {
     static u8 listed[MAX_LEVEL_MOBYS / 8];
     memset(listed, 0, sizeof(listed));
@@ -885,24 +907,17 @@ static Moby* add_remote_enemies(Moby* list) {
 
     for (int i = 0; i < MAX_ENEMIES; i++) {
         SyncedEnemy* enemy = &enemies_[i];
-        if (!enemy->used || !(owner_is_remote(enemy) || enemy->copy) || enemy->index >= MAX_LEVEL_MOBYS ||
-            (listed[enemy->index / 8] & (1 << (enemy->index % 8)))) {
-            continue;
+        if (enemy->used && (owner_is_remote(enemy) || enemy->copy)) {
+            list = add_to_list(list, &last, listed, enemy->index);
         }
+    }
 
-        Moby* moby = LEVEL_MOBYS_START + enemy->index;
-        if (moby >= moby_ptr_end || moby->state < 0 || (moby->mode_bits & MODE_HIDDEN)) {
-            continue;
+    if (!(sync_off_ & SYNC_OFF_MOVERS)) {
+        static u16 movers[256];
+        int n = MoverSync::remote_indexes(movers, 256);
+        for (int i = 0; i < n; i++) {
+            list = add_to_list(list, &last, listed, movers[i]);
         }
-
-        moby->p_chain = nullptr;
-        if (last == nullptr) {
-            list = moby;
-        } else {
-            last->p_chain = moby;
-        }
-        last = moby;
-        listed[enemy->index / 8] |= 1 << (enemy->index % 8);
     }
 
     return list;
