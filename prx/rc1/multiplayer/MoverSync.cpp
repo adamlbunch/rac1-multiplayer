@@ -250,6 +250,25 @@ static bool looks_like_pointer(u32 value) {
     return (value >= 0x10000 && value < 0x1800000) || points_into_level(value);
 }
 
+// A value we copy from another game and over ours: a number, the way the game keeps timers, counters, speeds and
+//  distances (a whole number below 0x10000 either way, or a float between 2^-40 and 2^40), and not an address. Not
+//  bytes or halves packed together: those can be the game's bookkeeping too (Veldin 2's class 1356 keeps whether it's
+//  on a list in the second byte of 0xe0 in its variables; set from the other game, it unlinked itself from a list it
+//  wasn't on there, and that game crashed).
+static bool copyable(u32 value) {
+    if (looks_like_pointer(value)) {
+        return false;
+    }
+
+    s32 whole = (s32)value;
+    if (whole > -0x10000 && whole < 0x10000) {
+        return true;
+    }
+
+    u32 exponent = (value >> 23) & 0xff;
+    return exponent >= 127 - 40 && exponent <= 127 + 40;
+}
+
 // How other games know an address in its variables that's about our player: our player's moby, where they are or
 //  which way they face. MP_MOVER_WORD_VALUE if it's not about our player.
 static u16 player_reference(u32 value, u32* into) {
@@ -476,7 +495,7 @@ static bool apply_words(Mover* mover, Moby* moby, u16 sender, MPMoverWord* words
 
         u32 ours;
         memcpy(&ours, vars + word->offset, 4);
-        if (ours != value && !looks_like_pointer(ours) && !looks_like_pointer(value)) {
+        if (ours != value && copyable(ours) && copyable(value)) {
             memcpy(vars + word->offset, &value, 4);
         }
     }
@@ -715,11 +734,11 @@ static void fill_state(Mover* mover, Moby* moby, float distance, OutgoingMover* 
 
         u32 bit = 1u << ((offset / 4) % 32);
         u32* changed = &mover->changed[offset / 4 / 32];
-        if (value != baseline && !looks_like_pointer(value)) {
+        if (value != baseline && copyable(value)) {
             *changed |= bit;
         }
 
-        if (((*changed & bit) || (all_words && !looks_like_pointer(value))) && n_words < MAX_WORDS) {
+        if (((*changed & bit) || all_words) && copyable(value) && n_words < MAX_WORDS) {
             out->words[n_words].offset = offset;
             out->words[n_words].kind = MP_MOVER_WORD_VALUE;
             out->words[n_words].value = value;
@@ -739,7 +758,7 @@ static void fill_state(Mover* mover, Moby* moby, float distance, OutgoingMover* 
 
         u32 value, into;
         memcpy(&value, vars + word * 4, 4);
-        if (looks_like_pointer(value) || player_reference(value, &into) != MP_MOVER_WORD_VALUE) {
+        if (!copyable(value) || player_reference(value, &into) != MP_MOVER_WORD_VALUE) {
             continue;
         }
 
