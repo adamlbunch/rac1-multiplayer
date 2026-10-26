@@ -34,7 +34,7 @@ struct WorldSync {
     //  a gate another player's progress opened would otherwise stay shut until we reload.
     static void on_gone_for_good(int level, int offset, u8 before, u8 after);
 
-    // Another player showed up on our level: they're told what was destroyed here before they came
+    // Another player showed up on our level: they're told which crates were broken here before they came
     static void on_player_arrived();
 
     // A damage record that isn't a real hit, so it's not passed on

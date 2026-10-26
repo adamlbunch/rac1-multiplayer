@@ -75,9 +75,12 @@ struct PendingRemoval {
 
 static PendingRemoval pending_removals_[MAX_PENDING_REMOVALS];
 
-// Mobys placed in the level that were destroyed since it loaded, here or in another player's game. A respawn sets the
-//  level up again in our game only, which brings them back here while they stay gone in the others, so they're
-//  removed again for a while after it.
+// Crates placed in the level that were broken since it loaded, here or in another player's game. A respawn sets the
+//  level up again in our game only, which brings them back here (and their bolts) while they stay gone in the others,
+//  so they're removed again for a while after it. Only crates: other mobys can be tied to each other in ways that
+//  only their own code undoes (see safe_to_remove), and after a respawn they come back like in the normal game.
+#define FIRST_CRATE_O_CLASS 500
+#define LAST_CRATE_O_CLASS 511
 #define MAX_DESTROYED 512
 #define REDESTROY_TICKS (60 * 5)
 
@@ -129,7 +132,7 @@ static bool safe_to_remove(Moby* target) {
 }
 
 static void note_destroyed(const MobyKey* key) {
-    if (key->spawn != 0) {
+    if (key->spawn != 0 || key->o_class < FIRST_CRATE_O_CLASS || key->o_class > LAST_CRATE_O_CLASS) {
         return;
     }
 
@@ -308,13 +311,13 @@ static void redestroy() {
         }
 
         if (!safe_to_remove(moby)) {
-            Logger::debug("WorldSync: leaving moby %d (o_class %d) here, others hold on to it", destroyed_[i].uid,
+            Logger::debug("WorldSync: leaving crate %d (o_class %d) here, others hold on to it", destroyed_[i].uid,
                           destroyed_[i].o_class);
             kept_[i] = true;
             continue;
         }
 
-        Logger::debug("WorldSync: removing moby %d (o_class %d) again, it was destroyed before we respawned",
+        Logger::debug("WorldSync: removing crate %d (o_class %d) again, it was broken before we respawned",
                       destroyed_[i].uid, destroyed_[i].o_class);
         moby->state = -1;
         delete_moby(moby);
