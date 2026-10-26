@@ -632,6 +632,11 @@ static bool before_update(Moby* moby) {
     if (enemy == nullptr) {
         if (!(sync_off_ & SYNC_OFF_MOVERS)) {
             MoverSync::before_update(moby, updating_index_);
+
+            // What it does in its own update starts from what another game put it in
+            position_before_ = moby->position;
+            rotation_before_ = moby->rotation;
+            state_before_ = moby->state;
         }
         return true;
     }
@@ -780,7 +785,7 @@ static void after_transform(Moby* moby) {
         // Things that move on their own but aren't enemies: in step with the game whose player is nearest
         if ((traits_[index] & (TRAIT_MOVES | TRAIT_STATE_CHANGES)) && !(sync_off_ & SYNC_OFF_MOVERS)) {
             MoverSync::after_update(moby, index, player_distance(moby), (traits_[index] & TRAIT_MOVES) != 0,
-                                    (traits_[index] & TRAIT_STATE_CHANGES) != 0);
+                                    (traits_[index] & TRAIT_STATE_CHANGES) != 0, state_before_);
         }
         return;
     }

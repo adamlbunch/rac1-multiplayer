@@ -14,6 +14,11 @@
 //  in their own for a moment, unless our player is right next to them (what's going on with them there is up to us).
 //  Only things that are drawn: the level's invisible triggers (cutscenes, the camera...) are never touched, and
 //  neither is anything doing something with our player.
+//
+// When one of those changes its state by itself (a door opens because a puzzle was solved, a button goes down), the
+//  game it happened in tells the others right away, and they make the same change, wherever the players are: the
+//  game whose player is nearest may not be the one where it happened. Things that change state all the time (lights
+//  blinking) don't flood the others with every change, they're kept in step by the states now and then.
 
 #ifndef RAC1_MULTIPLAYER_MOVERSYNC_H
 #define RAC1_MULTIPLAYER_MOVERSYNC_H
@@ -28,7 +33,7 @@ struct MoverSync {
     // From our moby update loop (see EnemySync), for the level's mobys that move on their own or change their state,
     //  and aren't enemies: before its update, and after it with how far our player is from it
     static void before_update(Moby* moby, int index);
-    static void after_update(Moby* moby, int index, float distance, bool moves, bool changes_state);
+    static void after_update(Moby* moby, int index, float distance, bool moves, bool changes_state, s8 state_before);
 
     // Sends what was queued this frame, after the loop
     static void send(u32 frame);

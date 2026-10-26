@@ -55,6 +55,25 @@
 // Things that change their state send it right away when it changes, and every so often otherwise
 #define STATE_SEND_INTERVAL 60
 
+// A thing that changes its state by itself more often than this sends no more changes for a while: it's blinking
+//  or cycling, and the states sent now and then keep it in step
+#define TRANSITION_WINDOW 120
+#define MAX_WINDOW_TRANSITIONS 3
+#define CYCLER_TICKS 600
+
+// After a change of state from another game, or one of our own, states sent now and then don't change it for this
+//  long: they may have been sent before it
+#define TRANSITION_HOLD 60
+
+// A change from another game that can't be made yet (it's changing on its own here) waits this many frames at most
+#define TRANSITION_WAIT 60
+
+#define MAX_OUTGOING_TRANSITIONS 16
+
+// A change of state goes out this many frames after it happened, unless our game left normal play meanwhile: then it
+//  was a character starting to talk, a cutscene starting, and those are about our player only
+#define TRANSITION_DELAY 10
+
 // Bolts are each player's own
 #define BOLT_O_CLASS 13
 #define BIG_BOLT_O_CLASS 14
@@ -95,6 +114,19 @@ struct Mover {
     s8 local_state;
     u8 state_frames;
 
+    // Changes of its state by itself here: how many lately, and until when it's left to the states sent now and then
+    u32 window_tick;
+    u8 window_transitions;
+    u32 cycler_until;
+    u32 transition_tick;    // When it last changed state by itself here, or from another game's change
+
+    // A change of its state another game made, waiting to be made here
+    bool pending_transition;
+    u8 transition_wait;
+    MPEnemyState transition;
+    u16 transition_n_words;
+    MPMoverWord transition_words[MAX_WORDS];
+
     // A state of it from that game, to put it in at that game's frame we show
     bool pending;
     u32 frame;
@@ -123,6 +155,9 @@ static u8 slots_[MAX_LEVEL_MOBYS];    // Per moby placed in the level: its mover
 static MoverSender senders_[MAX_SENDERS];
 static OutgoingMover outgoing_[MAX_OUTGOING];
 static int n_outgoing_ = 0;
+static OutgoingMover outgoing_transitions_[MAX_OUTGOING_TRANSITIONS];
+static u32 transition_ticks_[MAX_OUTGOING_TRANSITIONS];
+static int n_outgoing_transitions_ = 0;
 static u32 ticks_ = 0;
 
 static float square_root(float x) {
@@ -285,6 +320,64 @@ static bool sent_by_other(Mover* mover, float distance) {
            distance >= mover->sender_distance - TIE_DISTANCE;
 }
 
+// Takes on another game's variables, leaving alone ours that point somewhere in our memory or hold a sound channel
+static void apply_words(Mover* mover, Moby* moby, MPMoverWord* words, u16 n_words) {
+    u8* vars = (u8*)moby->vars;
+    if (vars == nullptr) {
+        return;
+    }
+
+    for (int i = 0; i < n_words; i++) {
+        MPMoverWord* word = &words[i];
+        if (word->offset + 4 > mover->vars_size || holds_channel(mover, word->offset)) {
+            continue;
+        }
+
+        u32 ours;
+        memcpy(&ours, vars + word->offset, 4);
+        if (ours != word->value && !looks_like_pointer(ours) && !looks_like_pointer(word->value)) {
+            memcpy(vars + word->offset, &word->value, 4);
+        }
+    }
+}
+
+static void apply_place(Moby* moby, MPEnemyState* state) {
+    moby->position.x = state->position[0];
+    moby->position.y = state->position[1];
+    moby->position.z = state->position[2];
+    moby->rotation.x = state->rotation[0];
+    moby->rotation.y = state->rotation[1];
+    moby->rotation.z = state->rotation[2];
+    moby->scale = state->scale;
+    moby->alpha = state->alpha;
+}
+
+// Makes the change of state another game's copy made by itself, once ours is in the state it changed from, has been
+//  in its own a while, or has kept it waiting long enough
+static void apply_transition(Mover* mover, Moby* moby) {
+    MPEnemyState* transition = &mover->transition;
+    if ((s8)transition->state == moby->state || involves_player(moby, mover->vars_size)) {
+        mover->pending_transition = false;
+        return;
+    }
+
+    mover->transition_wait += 1;
+    if (moby->state != (s8)transition->pad[0] && mover->state_frames < STABLE_FRAMES &&
+        mover->transition_wait < TRANSITION_WAIT) {
+        return;
+    }
+
+    mover->pending_transition = false;
+    moby->state = transition->state;
+    apply_place(moby, transition);
+    MobyAnimation::apply(moby, &transition->anim, &mover->animation, false);
+    apply_words(mover, moby, mover->transition_words, mover->transition_n_words);
+
+    mover->local_state = moby->state;
+    mover->state_frames = 0;
+    mover->transition_tick = ticks_;
+}
+
 void MoverSync::before_update(Moby* moby, int index) {
     Mover* mover = find_mover(index);
     if (mover == nullptr || moby->o_class != (short)mover->o_class) {
@@ -305,6 +398,10 @@ void MoverSync::before_update(Moby* moby, int index) {
         mover->state_frames += 1;
     }
 
+    if (mover->pending_transition) {
+        apply_transition(mover, moby);
+    }
+
     if (!mover->pending) {
         return;
     }
@@ -321,20 +418,14 @@ void MoverSync::before_update(Moby* moby, int index) {
         return;
     }
 
-    // Where it is, its animation and its variables. Not its own state: its code may need to have set things up
-    //  here on its way into it.
+    // Where it is, its animation and its variables. Its own state only once it has been in its own a while and our
+    //  player isn't right next to it, and not right after a change of state, which may be newer than this.
     MPEnemyState* state = &mover->state;
-    moby->position.x = state->position[0];
-    moby->position.y = state->position[1];
-    moby->position.z = state->position[2];
-    moby->rotation.x = state->rotation[0];
-    moby->rotation.y = state->rotation[1];
-    moby->rotation.z = state->rotation[2];
-    moby->scale = state->scale;
-    moby->alpha = state->alpha;
+    apply_place(moby, state);
 
     if ((state->flags & MP_ENEMY_FLAG_STATE) && state->state != 0 && state->state < 0x80 &&
-        state->state != (u8)moby->state && mover->state_frames >= STABLE_FRAMES && ratchet_moby != nullptr && drawn(moby)) {
+        state->state != (u8)moby->state && mover->state_frames >= STABLE_FRAMES &&
+        ticks_ - mover->transition_tick >= TRANSITION_HOLD && ratchet_moby != nullptr && drawn(moby)) {
         float dx = ratchet_moby->position.x - moby->position.x;
         float dy = ratchet_moby->position.y - moby->position.y;
         float dz = ratchet_moby->position.z - moby->position.z;
@@ -346,32 +437,12 @@ void MoverSync::before_update(Moby* moby, int index) {
     }
 
     MobyAnimation::apply(moby, &state->anim, &mover->animation, false);
-
-    u8* vars = (u8*)moby->vars;
-    if (vars == nullptr) {
-        return;
-    }
-
-    for (int i = 0; i < mover->n_words; i++) {
-        MPMoverWord* word = &mover->words[i];
-        if (word->offset + 4 > mover->vars_size || holds_channel(mover, word->offset)) {
-            continue;
-        }
-
-        u32 ours;
-        memcpy(&ours, vars + word->offset, 4);
-        if (ours != word->value && !looks_like_pointer(ours) && !looks_like_pointer(word->value)) {
-            memcpy(vars + word->offset, &word->value, 4);
-        }
-    }
+    apply_words(mover, moby, mover->words, mover->n_words);
 }
 
-static void queue_state(Mover* mover, Moby* moby, float distance, bool changes_state) {
-    if (n_outgoing_ >= MAX_OUTGOING) {
-        return;
-    }
-
-    OutgoingMover* out = &outgoing_[n_outgoing_];
+// What we send of a mover: what it is, where, its state, its animation, and its variables. Those that changed since
+//  we first saw it and a few others in turn, or for a change of its state, all of them that fit.
+static void fill_state(Mover* mover, Moby* moby, float distance, OutgoingMover* out, bool all_words) {
     MPEnemyState* state = &out->head.moby;
     memset(state, 0, sizeof(MPEnemyState));
     state->uid = mover->uid;
@@ -386,13 +457,8 @@ static void queue_state(Mover* mover, Moby* moby, float distance, bool changes_s
     state->rotation[1] = moby->rotation.y;
     state->rotation[2] = moby->rotation.z;
     state->scale = moby->scale;
-    if (changes_state && drawn(moby)) {
-        state->flags |= MP_ENEMY_FLAG_STATE;
-    }
     MobyAnimation::capture(moby, &state->anim);
-    mover->sent_state = moby->state;
 
-    // The variables that changed since we first saw it, and keep changing: where along its path it is, its timers...
     note_channels(mover, moby);
     u16 n_words = 0;
     u8* vars = (u8*)moby->vars;
@@ -411,7 +477,7 @@ static void queue_state(Mover* mover, Moby* moby, float distance, bool changes_s
             *changed |= bit;
         }
 
-        if ((*changed & bit) && n_words < MAX_WORDS) {
+        if (((*changed & bit) || (all_words && !looks_like_pointer(value))) && n_words < MAX_WORDS) {
             out->words[n_words].offset = offset;
             out->words[n_words].pad = 0;
             out->words[n_words].value = value;
@@ -421,7 +487,7 @@ static void queue_state(Mover* mover, Moby* moby, float distance, bool changes_s
 
     // And a few of the others in turn
     u16 n_vars = mover->vars_size / 4;
-    for (int i = 0; vars != nullptr && i < ROTATING_WORDS && n_vars > 0 && n_words < MAX_WORDS; i++) {
+    for (int i = 0; !all_words && vars != nullptr && i < ROTATING_WORDS && n_vars > 0 && n_words < MAX_WORDS; i++) {
         u16 word = mover->next_word % n_vars;
         mover->next_word = (mover->next_word + 1) % n_vars;
         if ((mover->changed[word / 32] & (1u << (word % 32))) || holds_channel(mover, word * 4)) {
@@ -442,10 +508,54 @@ static void queue_state(Mover* mover, Moby* moby, float distance, bool changes_s
 
     out->head.n_words = n_words;
     out->head.pad = 0;
+}
+
+static void queue_state(Mover* mover, Moby* moby, float distance, bool changes_state) {
+    if (n_outgoing_ >= MAX_OUTGOING) {
+        return;
+    }
+
+    OutgoingMover* out = &outgoing_[n_outgoing_];
+    fill_state(mover, moby, distance, out, false);
+    if (changes_state && drawn(moby)) {
+        out->head.moby.flags |= MP_ENEMY_FLAG_STATE;
+    }
+    mover->sent_state = moby->state;
     n_outgoing_ += 1;
 }
 
-void MoverSync::after_update(Moby* moby, int index, float distance, bool moves, bool changes_state) {
+// It changed its state by itself: to the other games right away, unless it does that all the time
+static void queue_transition(Mover* mover, Moby* moby, float distance, s8 state_before) {
+    mover->transition_tick = ticks_;
+
+    if (ticks_ < mover->cycler_until) {
+        return;
+    }
+
+    if (ticks_ - mover->window_tick > TRANSITION_WINDOW) {
+        mover->window_tick = ticks_;
+        mover->window_transitions = 0;
+    }
+
+    mover->window_transitions += 1;
+    if (mover->window_transitions > MAX_WINDOW_TRANSITIONS) {
+        mover->cycler_until = ticks_ + CYCLER_TICKS;
+        return;
+    }
+
+    if (n_outgoing_transitions_ >= MAX_OUTGOING_TRANSITIONS || involves_player(moby, mover->vars_size)) {
+        return;
+    }
+
+    OutgoingMover* out = &outgoing_transitions_[n_outgoing_transitions_];
+    fill_state(mover, moby, distance, out, true);
+    out->head.moby.flags |= MP_ENEMY_FLAG_STATE | MP_ENEMY_FLAG_TRANSITION;
+    out->head.moby.pad[0] = (u8)state_before;
+    transition_ticks_[n_outgoing_transitions_] = ticks_;
+    n_outgoing_transitions_ += 1;
+}
+
+void MoverSync::after_update(Moby* moby, int index, float distance, bool moves, bool changes_state, s8 state_before) {
     u16 uid, spawn;
     if (moby->state < 0 || !syncable_class(moby) || !SpawnedMobys::identify(moby, &uid, &spawn) || spawn != 0) {
         return;
@@ -462,6 +572,17 @@ void MoverSync::after_update(Moby* moby, int index, float distance, bool moves, 
     }
 
     Mover* mover = find_mover(index);
+
+    // Its own change of state, wherever the players are
+    if (changes_state && state_before >= 0 && moby->state != state_before && drawn(moby)) {
+        if (mover == nullptr) {
+            mover = add_mover(index, moby, uid);
+        }
+        if (mover != nullptr) {
+            queue_transition(mover, moby, distance, state_before);
+        }
+    }
+
     if (mover == nullptr) {
         // The nearest player's game sends it, the others wait for it
         if (distance * distance > others_sq) {
@@ -487,21 +608,15 @@ void MoverSync::after_update(Moby* moby, int index, float distance, bool moves, 
     }
 }
 
-void MoverSync::send(u32 frame) {
-    Client* client = Game::shared().connected_client();
-    if (client == nullptr || n_outgoing_ == 0) {
-        n_outgoing_ = 0;
-        return;
-    }
-
+static void send_movers(Client* client, OutgoingMover* outgoing, int n_outgoing, u32 frame, bool reliable) {
     const size_t max_body = sizeof(((Packet*)0)->payload_buffer) - sizeof(MPPacketHeader);
 
     int sent = 0;
-    while (sent < n_outgoing_) {
+    while (sent < n_outgoing) {
         size_t len = sizeof(MPPacketMovers);
         int count = 0;
-        while (sent + count < n_outgoing_) {
-            size_t size = sizeof(MPMoverState) + outgoing_[sent + count].head.n_words * sizeof(MPMoverWord);
+        while (sent + count < n_outgoing) {
+            size_t size = sizeof(MPMoverState) + outgoing[sent + count].head.n_words * sizeof(MPMoverWord);
             if (len + size > max_body) {
                 break;
             }
@@ -512,32 +627,65 @@ void MoverSync::send(u32 frame) {
 
         // One too big for a packet on its own: as many of its variables as fit
         if (count == 0) {
-            OutgoingMover* big = &outgoing_[sent];
+            OutgoingMover* big = &outgoing[sent];
             big->head.n_words = (max_body - len - sizeof(MPMoverState)) / sizeof(MPMoverWord);
             len += sizeof(MPMoverState) + big->head.n_words * sizeof(MPMoverWord);
             count = 1;
         }
 
-        Packet packet = Packet(len);
-        packet.header->type = MP_PACKET_MOVERS;
-        packet.retain_after_send = true;
+        // Changes of state are sent until they arrive, so the client keeps those packets until then
+        Packet* packet = new Packet(len);
+        packet->header->type = MP_PACKET_MOVERS;
 
-        MPPacketMovers* body = (MPPacketMovers*)packet.body;
+        MPPacketMovers* body = (MPPacketMovers*)packet->body;
         body->n_movers = count;
         body->frame = frame;
 
         u8* data = (u8*)body + sizeof(MPPacketMovers);
         for (int i = sent; i < sent + count; i++) {
-            size_t size = sizeof(MPMoverState) + outgoing_[i].head.n_words * sizeof(MPMoverWord);
-            memcpy(data, &outgoing_[i], size);
+            size_t size = sizeof(MPMoverState) + outgoing[i].head.n_words * sizeof(MPMoverWord);
+            memcpy(data, &outgoing[i], size);
             data += size;
         }
 
-        client->send(&packet);
+        if (reliable) {
+            client->send_ack(packet);
+        } else {
+            client->send(packet);
+        }
         sent += count;
     }
+}
 
+void MoverSync::send(u32 frame) {
+    Client* client = Game::shared().connected_client();
+    if (client != nullptr) {
+        send_movers(client, outgoing_, n_outgoing_, frame, false);
+    }
     n_outgoing_ = 0;
+
+    if (client == nullptr || game_state != PlayerControl) {
+        n_outgoing_transitions_ = 0;
+        return;
+    }
+
+    // The changes of state old enough, keeping the others for later
+    int n_due = 0;
+    while (n_due < n_outgoing_transitions_ && ticks_ - transition_ticks_[n_due] >= TRANSITION_DELAY) {
+        n_due += 1;
+    }
+
+    if (n_due == 0) {
+        return;
+    }
+
+    send_movers(client, outgoing_transitions_, n_due, frame, true);
+
+    for (int i = n_due; i < n_outgoing_transitions_; i++) {
+        outgoing_transitions_[i - n_due] = outgoing_transitions_[i];
+        transition_ticks_[i - n_due] = transition_ticks_[i];
+    }
+    n_outgoing_transitions_ -= n_due;
 }
 
 void MoverSync::receive(MPPacketMovers* packet, size_t len) {
@@ -583,6 +731,18 @@ void MoverSync::receive(MPPacketMovers* packet, size_t len) {
             continue;
         }
 
+        MPMoverWord* words = (MPMoverWord*)((u8*)head + sizeof(MPMoverState));
+
+        // A change of state it made by itself there: made here too, wherever our player is
+        if (head->moby.flags & MP_ENEMY_FLAG_TRANSITION) {
+            mover->pending_transition = true;
+            mover->transition_wait = 0;
+            memcpy(&mover->transition, &head->moby, sizeof(MPEnemyState));
+            mover->transition_n_words = head->n_words;
+            memcpy(mover->transition_words, words, head->n_words * sizeof(MPMoverWord));
+            continue;
+        }
+
         // Our player is clearly nearer: ours to send, and theirs to take once they see it
         float dx = ratchet_moby->position.x - moby->position.x;
         float dy = ratchet_moby->position.y - moby->position.y;
@@ -602,7 +762,7 @@ void MoverSync::receive(MPPacketMovers* packet, size_t len) {
         mover->frame = packet->frame;
         memcpy(&mover->state, &head->moby, sizeof(MPEnemyState));
         mover->n_words = head->n_words;
-        memcpy(mover->words, (u8*)head + sizeof(MPMoverState), head->n_words * sizeof(MPMoverWord));
+        memcpy(mover->words, words, head->n_words * sizeof(MPMoverWord));
     }
 }
 
@@ -636,4 +796,5 @@ void MoverSync::reset() {
     memset(slots_, 0, sizeof(slots_));
     memset(senders_, 0, sizeof(senders_));
     n_outgoing_ = 0;
+    n_outgoing_transitions_ = 0;
 }
