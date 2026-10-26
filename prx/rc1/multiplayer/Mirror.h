@@ -88,6 +88,9 @@ struct Mirror {
     // A player's hero moby was deleted
     static void forget(u16 uuid);
 
+    // Removes the copies of other players' weapons drawn with our own loads of them (see GadgetModels)
+    static void drop_gadget_models();
+
     // The level is gone (respawn, level change, disconnect), and with it every moby we spawned
     static void reset();
 

@@ -495,6 +495,19 @@ void stop_sound_hook(s32 handle) {
     SHK_CALL_HOOK(_stop_sound, handle);
 }
 
+// The game's allocator for its own memory areas (the level's, and others): the area, how much, and the alignment
+SHK_HOOK(void*, _game_heap_alloc, u32*, s32, s32);
+void* game_heap_alloc_hook(u32* heap, s32 size, s32 align) {
+    void* memory = SHK_CALL_HOOK(_game_heap_alloc, heap, size, align);
+
+    // Out of room, which the game doesn't survive: if our weapon models took from that area, it gets that back
+    if (memory == NULL && size > 0 && _c_on_game_heap_full(heap, size, (u32)__builtin_return_address(0))) {
+        memory = SHK_CALL_HOOK(_game_heap_alloc, heap, size, align);
+    }
+
+    return memory;
+}
+
 // Plays a sound another game played, with the same function (MP_SOUND_FUNCTION_*)
 s32 _c_play_sound(u8 function, s32 index, s32 flags, Moby* moby, u16 sound_class) {
     switch (function) {
@@ -570,6 +583,7 @@ void rc1_init() {
     SHK_BIND_HOOK(_play_level_sound2, play_level_sound2_hook);
     SHK_BIND_HOOK(_play_step_sound, play_step_sound_hook);
     SHK_BIND_HOOK(_stop_sound, stop_sound_hook);
+    SHK_BIND_HOOK(_game_heap_alloc, game_heap_alloc_hook);
     SHK_BIND_HOOK(metal_detector_spot_update_func, metal_detector_spot_update_func_hook);
     SHK_BIND_HOOK(bink_do_frame, bink_do_frame_hook);
     SHK_BIND_HOOK(perform_save_action, perform_save_action_hook);

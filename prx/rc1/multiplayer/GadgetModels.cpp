@@ -7,6 +7,7 @@
 #include <rc1/rc1.h>
 
 #include "MPMoby.h"
+#include "Mirror.h"
 
 
 // The game's table of gadget models it swaps in and out: their moby class, where the model sits in memory and its size,
@@ -44,8 +45,10 @@ struct ModelSlot {
 };
 
 static u8* memory_ = nullptr;
-static u32* heap_ = nullptr;        // The level memory we took ours from, and its end after we did
+static u32* heap_ = nullptr;        // The level memory we took ours from, its end before and after we did
+static u32 heap_end_before_ = 0;
 static u32 heap_end_ = 0;
+static bool gave_back_ = false;     // The game needed ours on this level
 static u32 failed_heap_end_ = 0;    // Level memory that didn't have room for ours
 static int n_slots_ = 0;
 static ModelSlot slots_[MAX_SLOTS];
@@ -85,6 +88,10 @@ static bool prepare_memory() {
     n_slots_ = 0;
     memset(slots_, 0, sizeof(slots_));
 
+    if (gave_back_) {
+        return false;
+    }
+
     u32 next_free = heap[1];
     u32 end = heap[2];
     u32 spare = end > next_free ? end - next_free : 0;
@@ -105,6 +112,7 @@ static bool prepare_memory() {
     heap[2] = start;
 
     heap_ = heap;
+    heap_end_before_ = end;
     heap_end_ = start;
     memory_ = (u8*)start;
     n_slots_ = slots;
@@ -117,8 +125,36 @@ void GadgetModels::on_tick() {
     ticks_ += 1;
 }
 
+bool GadgetModels::owns(MobyClass* model) {
+    return memory_ != nullptr && (u8*)model >= memory_ && (u8*)model < memory_ + n_slots_ * SLOT_SIZE;
+}
+
+bool GadgetModels::give_back(u32* heap) {
+    // Only while the game hasn't moved the end of that memory itself: then it's below ours, and ours is still ours
+    if (memory_ == nullptr || heap != heap_ || heap != LEVEL_HEAP || heap[2] != heap_end_) {
+        return false;
+    }
+
+    // Nothing may be drawn with our models once the game writes over them
+    Mirror::drop_gadget_models();
+
+    heap[2] = heap_end_before_;
+    memory_ = nullptr;
+    n_slots_ = 0;
+    memset(slots_, 0, sizeof(slots_));
+    gave_back_ = true;
+
+    Logger::error("GadgetModels: the game needed the level memory other players' weapons were in, they aren't drawn "
+                  "until the level loads again");
+    return true;
+}
+
+void GadgetModels::reset() {
+    gave_back_ = false;
+}
+
 void GadgetModels::touch(MobyClass* model) {
-    if (memory_ == nullptr || (u8*)model < memory_ || (u8*)model >= memory_ + n_slots_ * SLOT_SIZE) {
+    if (!owns(model)) {
         return;
     }
 
@@ -185,6 +221,12 @@ MobyClass* GadgetModels::load(u16 o_class) {
     slots_[slot].last_used = ticks_;
 
     return (MobyClass*)model;
+}
+
+extern "C" bool _c_on_game_heap_full(u32* heap, s32 size, u32 caller) {
+    Logger::error("Game: no room for %d bytes in its memory at 0x%08x (0x%08x to 0x%08x free), asked from 0x%08x", size,
+                  heap, heap[1], heap[2], caller);
+    return GadgetModels::give_back(heap);
 }
 
 MobyClass* GadgetModels::loaded_class(u16 o_class) {

@@ -25,6 +25,7 @@
 #include "rc1/multiplayer/EffectSync.h"
 #include "rc1/multiplayer/SoundSync.h"
 #include "rc1/multiplayer/MoverSync.h"
+#include "rc1/multiplayer/GadgetModels.h"
 #include "rc1/multiplayer/SyncedMoby.h"
 
 // For whatever dumb reason I can't get the compiler to include
@@ -240,6 +241,7 @@ void Game::before_player_spawn() {
         EffectSync::reset();
         SoundSync::reset();
         MoverSync::reset();
+        GadgetModels::reset();
 
         if (last_planet_ != current_planet) {
             last_planet_ = current_planet;

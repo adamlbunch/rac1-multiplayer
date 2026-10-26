@@ -24,6 +24,16 @@ struct GadgetModels {
 
     static void on_tick();
 
+    // Whether a model is one of our loaded copies
+    static bool owns(MobyClass* model);
+
+    // The game ran out of room in one of its memory areas. If it's the one our models are in, they give it back to
+    //  the game and aren't loaded again until the level is set up anew. Returns whether there's more room now.
+    static bool give_back(u32* heap);
+
+    // The level is set up anew (level change or respawn)
+    static void reset();
+
     // The model a regular (non-gadget) moby class has loaded in our game, or null if it isn't loaded
     static MobyClass* loaded_class(u16 o_class);
 

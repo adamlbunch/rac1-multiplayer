@@ -202,6 +202,17 @@ static MobyClass* attachment_model(RemotePlayer* remote, u16 o_class) {
     return GadgetModels::loaded_class(o_class);
 }
 
+void Mirror::drop_gadget_models() {
+    for (int i = 0; i < MIRROR_MAX_PLAYERS; i++) {
+        RemotePlayer* remote = &remote_players_[i];
+        for (int slot = 0; slot < MP_MIRROR_ATTACHMENT_SLOTS; slot++) {
+            if (remote->attachment_models[slot] != nullptr && GadgetModels::owns(remote->attachment_models[slot])) {
+                remove_attachment(remote, slot, true);
+            }
+        }
+    }
+}
+
 static void deactivate(RemotePlayer* remote, bool mobys_exist) {
     for (int slot = 0; slot < MP_MIRROR_ATTACHMENT_SLOTS; slot++) {
         remove_attachment(remote, slot, mobys_exist);

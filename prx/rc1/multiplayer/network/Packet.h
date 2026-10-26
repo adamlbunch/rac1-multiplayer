@@ -643,10 +643,14 @@ typedef struct {
     u32 frame;            // Sender's frame counter, see MPPacketEnemyState
 } MPPacketMovers;
 
+// A bit for each of the variables a mover's state carries at most (see MoverSync's VARS_MAX)
+#define MP_MOVER_POINTER_MASKS 3
+
 typedef struct {
     MPEnemyState moby;    // What it is, its state, where it is and its animation (spawn is always 0)
     u16 n_words;          // How many of its variables follow: the ones that aren't what the level started them at
     u16 pad;
+    u32 pointers[MP_MOVER_POINTER_MASKS];  // Which of its variables hold an address in the sender's game
 } MPMoverState;
 
 typedef struct {

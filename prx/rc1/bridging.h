@@ -37,6 +37,8 @@ bool _c_should_play_sound(Moby* moby);
 void _c_on_sound_played(u8 function, s32 index, s32 flags, Moby* moby, u16 sound_class, s32 handle);
 void _c_on_sound_stopped(s32 handle);
 
+bool _c_on_game_heap_full(u32* heap, s32 size, u32 caller);
+
 void _c_set_ratchet_animation_duration(u32 duration);
 
 void _c_bink_do_frame();
