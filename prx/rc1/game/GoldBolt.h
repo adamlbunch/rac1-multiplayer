@@ -11,6 +11,8 @@
 #define blocked_bolts ((char*)0xB00500)
 #define collected_bolts ((char*)0xB00600)
 
+#define GOLD_BOLT_O_CLASS 1134
+
 struct GoldBoltVars {
     int number;
 };

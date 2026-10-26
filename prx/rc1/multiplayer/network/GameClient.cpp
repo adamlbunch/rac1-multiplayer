@@ -21,6 +21,7 @@
 #include "../MoverSync.h"
 #include "../SyncedMoby.h"
 #include "../GadgetModels.h"
+#include "../LevelMobys.h"
 
 GameClient::GameClient(char *ip, int port) : Client(ip, port) {
     mobys_.resize(MAX_MP_MOBYS);
@@ -504,6 +505,17 @@ void GameClient::update_set_state(MPPacketSetState* packet) {
         }
         case MP_STATE_TYPE_BLOCK_BOLT: {
             blocked_bolts[(packet->offset * 4) + packet->value] = 1;
+
+            // Taken by another player: gone from our level right away, not only once we come near enough for its own
+            //  update to notice (see GoldBolt)
+            if ((int)packet->offset == current_planet && game_state == PlayerControl) {
+                for (Moby* moby = LEVEL_MOBYS_START; moby < LEVEL_MOBYS_END; moby++) {
+                    if (moby->o_class == GOLD_BOLT_O_CLASS && moby->state >= 0 && moby->state != 2 &&
+                        moby->vars != nullptr && ((GoldBoltVars*)moby->vars)->number == (int)packet->value) {
+                        delete_moby(moby);
+                    }
+                }
+            }
 
             break;
         }
