@@ -422,6 +422,16 @@ u8* _c_allocate_effect(u32 type) {
     return SHK_CALL_HOOK(_allocate_effect, type);
 }
 
+// Updates our player and what they hold, right after the moby update loop: the player isn't in it
+SHK_HOOK(void, update_player);
+void update_player_hook() {
+    _c_before_player_update();
+
+    SHK_CALL_HOOK(update_player);
+
+    _c_after_player_update();
+}
+
 SHK_HOOK(u64, init_gameplay);
 u64 init_gameplay_hook() {
     _c_before_init_gameplay();
@@ -468,6 +478,7 @@ void rc1_init() {
     SHK_BIND_HOOK(update_mobys, update_mobys_hook);
     SHK_BIND_HOOK(_set_moby_animation, set_moby_animation_hook);
     SHK_BIND_HOOK(_allocate_effect, allocate_effect_hook);
+    SHK_BIND_HOOK(update_player, update_player_hook);
     SHK_BIND_HOOK(metal_detector_spot_update_func, metal_detector_spot_update_func_hook);
     SHK_BIND_HOOK(bink_do_frame, bink_do_frame_hook);
     SHK_BIND_HOOK(perform_save_action, perform_save_action_hook);

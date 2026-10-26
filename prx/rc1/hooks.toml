@@ -103,3 +103,7 @@ replaced_instr = "stdu r1, -0xb0(r1)"
 [_allocate_effect]
 addr = 0x11e580
 replaced_instr = "stdu r1, -0x50(r1)"
+
+[update_player]
+addr = 0x954c8
+replaced_instr = "stdu r1, -0x120(r1)"

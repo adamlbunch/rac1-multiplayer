@@ -18,9 +18,12 @@
 #include "network/Packet.h"
 
 struct EffectSync {
-    // Around our copy of the game's moby update loop, see EnemySync
+    // Around our copy of the game's moby update loop (see EnemySync) and the update of our player, which the game
+    //  runs on its own after the loop, with what they hold
     static void begin_frame();
     static void end_frame();
+    static void before_player_update();
+    static void after_player_update();
 
     // From the hooks on the game's functions that make effect records and spawn mobys
     static void on_allocated(u8* effect);

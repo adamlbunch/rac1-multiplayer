@@ -52,6 +52,9 @@ static u16 spawned_classes_[MAX_SPAWNED];
 static u8* captured_[MAX_CAPTURED];
 static int n_captured_ = 0;
 
+// Our player, and with them what they hold, are being updated
+static bool player_updating_ = false;
+
 static QueuedEffect queue_[MAX_QUEUED];
 static u32 ticks_ = 0;
 
@@ -94,8 +97,6 @@ static bool in_use(u8* effect) {
 }
 
 void EffectSync::begin_frame() {
-    n_captured_ = 0;
-
     ours_[0] = ratchet_moby;
     for (int i = 0; i < GADGET_MOBYS; i++) {
         ours_[1 + i] = *(Moby**)(GADGET_SLOTS + (i / 2) * GADGET_SLOT_STRIDE + (i % 2) * 4);
@@ -104,7 +105,7 @@ void EffectSync::begin_frame() {
 
 void EffectSync::on_allocated(u8* effect) {
     if (effect == nullptr || n_captured_ >= MAX_CAPTURED || game_state != PlayerControl ||
-        !is_ours(EnemySync::updating())) {
+        !(player_updating_ || is_ours(EnemySync::updating()))) {
         return;
     }
 
@@ -112,7 +113,7 @@ void EffectSync::on_allocated(u8* effect) {
 }
 
 void EffectSync::on_spawned(Moby* moby) {
-    if (moby == nullptr || game_state != PlayerControl || !is_ours(EnemySync::updating())) {
+    if (moby == nullptr || game_state != PlayerControl || !(player_updating_ || is_ours(EnemySync::updating()))) {
         return;
     }
 
@@ -137,6 +138,15 @@ void EffectSync::on_spawned(Moby* moby) {
 
     spawned_[slot] = moby;
     spawned_classes_[slot] = moby->o_class;
+}
+
+void EffectSync::before_player_update() {
+    player_updating_ = true;
+}
+
+void EffectSync::after_player_update() {
+    player_updating_ = false;
+    end_frame();
 }
 
 void EffectSync::end_frame() {
@@ -249,4 +259,12 @@ extern "C" void _c_on_effect_allocated(u8* effect) {
 
 extern "C" void _c_on_moby_spawned(Moby* moby) {
     EffectSync::on_spawned(moby);
+}
+
+extern "C" void _c_before_player_update() {
+    EffectSync::before_player_update();
+}
+
+extern "C" void _c_after_player_update() {
+    EffectSync::after_player_update();
 }

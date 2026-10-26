@@ -30,6 +30,8 @@ void _c_on_moby_get_damage(Moby* moby);
 
 void _c_on_effect_allocated(u8* effect);
 void _c_on_moby_spawned(Moby* moby);
+void _c_before_player_update();
+void _c_after_player_update();
 
 void _c_set_ratchet_animation_duration(u32 duration);
 
