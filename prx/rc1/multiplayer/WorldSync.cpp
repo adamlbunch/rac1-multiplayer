@@ -74,6 +74,22 @@ struct PendingRemoval {
 };
 
 static PendingRemoval pending_removals_[MAX_PENDING_REMOVALS];
+
+// Mobys placed in the level that were destroyed since it loaded, here or in another player's game. A respawn sets the
+//  level up again in our game only, which brings them back here while they stay gone in the others, so they're
+//  removed again for a while after it.
+#define MAX_DESTROYED 512
+#define REDESTROY_TICKS (60 * 5)
+
+static MobyKey destroyed_[MAX_DESTROYED];
+static int n_destroyed_ = 0;
+static int destroyed_planet_ = -1;
+static bool redestroy_pending_ = false;     // From when our player is back in control
+static u32 redestroy_until_ = 0;
+
+// The next of those to tell a player who just arrived, -1 if there's nothing to tell
+#define RESENDS_PER_TICK 4
+static int resend_next_ = -1;
 static RemoteHit remote_hits_[MAX_REMOTE_HITS];
 
 static u32 ticks_ = 0;
@@ -216,8 +232,64 @@ static void send_record(Client* client, u8* record) {
 
     if (target->state < 0) {
         client->send_ack(Packet::make_moby_killed_packet(target_key.uid, target_key.o_class, target_key.spawn));
+        note_destroyed(&target_key);
     } else {
         remember_hit(target, &target_key);
+    }
+}
+
+static void note_destroyed(const MobyKey* key) {
+    if (key->spawn != 0) {
+        return;
+    }
+
+    for (int i = 0; i < n_destroyed_; i++) {
+        if (destroyed_[i].uid == key->uid && destroyed_[i].o_class == key->o_class) {
+            return;
+        }
+    }
+
+    if (n_destroyed_ < MAX_DESTROYED) {
+        destroyed_[n_destroyed_++] = *key;
+    }
+}
+
+static void redestroy() {
+    if (redestroy_pending_) {
+        redestroy_pending_ = false;
+        redestroy_until_ = ticks_ + REDESTROY_TICKS;
+    }
+
+    if ((s32)(ticks_ - redestroy_until_) >= 0 || ticks_ % 10 != 0) {
+        return;
+    }
+
+    for (int i = 0; i < n_destroyed_; i++) {
+        Moby* moby = LevelMobys::find(destroyed_[i].uid, destroyed_[i].o_class);
+        if (moby != nullptr) {
+            Logger::debug("WorldSync: removing moby %d (o_class %d) again, it was destroyed before we respawned",
+                          destroyed_[i].uid, destroyed_[i].o_class);
+            moby->state = -1;
+            delete_moby(moby);
+        }
+    }
+}
+
+void WorldSync::on_player_arrived() {
+    if (n_destroyed_ > 0) {
+        resend_next_ = 0;
+    }
+}
+
+static void resend_destroyed(Client* client) {
+    for (int sent = 0; resend_next_ >= 0 && sent < RESENDS_PER_TICK; sent++) {
+        if (resend_next_ >= n_destroyed_) {
+            resend_next_ = -1;
+            break;
+        }
+
+        MobyKey* key = &destroyed_[resend_next_++];
+        client->send_ack(Packet::make_moby_killed_packet(key->uid, key->o_class, key->spawn));
     }
 }
 
@@ -230,6 +302,7 @@ static void check_hit_mobys(Client* client) {
 
         if (!still(hit->moby, &hit->key)) {
             client->send_ack(Packet::make_moby_killed_packet(hit->key.uid, hit->key.o_class, hit->key.spawn));
+            note_destroyed(&hit->key);
             hit->moby = nullptr;
             continue;
         }
@@ -390,6 +463,8 @@ void WorldSync::on_tick(Client* client) {
     check_hit_mobys(client);
     apply_pending_kills();
     apply_pending_removals();
+    redestroy();
+    resend_destroyed(client);
     remove_remote_hit_bolts();
 }
 
@@ -471,6 +546,11 @@ void WorldSync::receive_killed(MPPacketMobyKilled* killed) {
     key.spawn = killed->spawn;
     key.o_class = killed->o_class;
 
+    // One of our level's: it may come back here when we respawn
+    if (key.spawn == 0 && LevelMobys::find(key.uid, key.o_class) != nullptr) {
+        note_destroyed(&key);
+    }
+
     PendingKill* free_slot = nullptr;
     for (int i = 0; i < MAX_PENDING_KILLS; i++) {
         PendingKill* kill = &pending_kills_[i];
@@ -487,6 +567,14 @@ void WorldSync::receive_killed(MPPacketMobyKilled* killed) {
         free_slot->used = true;
         free_slot->key = key;
         free_slot->deadline = ticks_ + KILL_GRACE_TICKS;
+        return;
+    }
+
+    // A lot at once (what was destroyed before we came): no time to play their deaths
+    Moby* moby = SpawnedMobys::find(key.uid, key.spawn, key.o_class);
+    if (moby != nullptr) {
+        moby->state = -1;
+        delete_moby(moby);
     }
 }
 
@@ -495,6 +583,17 @@ void WorldSync::ignore_record(u32 index) {
 }
 
 void WorldSync::reset() {
+    // A respawn on the same level: what was destroyed is gone again. A new level starts with everything there.
+    if (current_planet == destroyed_planet_) {
+        redestroy_pending_ = n_destroyed_ > 0;
+    } else {
+        n_destroyed_ = 0;
+        destroyed_planet_ = current_planet;
+        redestroy_pending_ = false;
+    }
+    redestroy_until_ = ticks_;
+    resend_next_ = -1;
+
     memset(hit_mobys_, 0, sizeof(hit_mobys_));
     memset(remote_hits_, 0, sizeof(remote_hits_));
     memset(pending_kills_, 0, sizeof(pending_kills_));

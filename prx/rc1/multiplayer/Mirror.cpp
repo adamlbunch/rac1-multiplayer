@@ -8,6 +8,7 @@
 
 #include "MPMoby.h"
 #include "GadgetModels.h"
+#include "WorldSync.h"
 #include "network/GameClient.h"
 
 // Gadget slots: the game keeps up to 2 mobys per slot on the player (hand, back, head, feet...), 0x50 bytes apart
@@ -349,8 +350,18 @@ void Mirror::on_tick() {
             continue;
         }
 
+        if (hero == nullptr) {
+            remote->arrived_hero = nullptr;
+        }
+
         if (game_state != PlayerControl || hero == nullptr) {
             continue;
+        }
+
+        // They showed up on our level (or it loaded again here)
+        if (hero != remote->arrived_hero) {
+            remote->arrived_hero = hero;
+            WorldSync::on_player_arrived();
         }
 
         // Play back one sender frame per frame, a few frames behind the newest, catching up if we fall behind

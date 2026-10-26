@@ -42,6 +42,7 @@ struct RemotePlayer {
 
     // What we show this frame, copied out of the buffer so packets arriving can't change it under us
     bool showing;
+    Moby* arrived_hero;     // Their hero moby here when we last noticed them arrive on our level
     MPMirrorMoby hero_state;
     u8 n_manipulators;
     MPMirrorManipulator manipulator_state[MP_MIRROR_MAX_MANIPULATORS];
