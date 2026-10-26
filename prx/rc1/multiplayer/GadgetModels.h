@@ -15,9 +15,14 @@ struct GadgetModels {
     // Whether the game swaps this moby class's model in and out of its gadget buffer
     static bool is_gadget(u16 o_class);
 
-    // Our own loaded copy of a gadget's model for the given owner (one of 2 players), alternating between 2 buffers
-    //  per owner so a model the GPU may still be drawing isn't overwritten. Returns null if it can't be loaded.
-    static MobyClass* load(u16 o_class, int owner);
+    // Our own loaded copy of a gadget's model, shared by every other player holding it. Returns null if it can't be
+    //  loaded, which happens when all of our model memory was drawn from in the last few frames.
+    static MobyClass* load(u16 o_class);
+
+    // A copy is drawn with this model this frame, so it isn't loaded over
+    static void touch(MobyClass* model);
+
+    static void on_tick();
 
     // The model a regular (non-gadget) moby class has loaded in our game, or null if it isn't loaded
     static MobyClass* loaded_class(u16 o_class);

@@ -18,9 +18,6 @@
 #define GADGET_MODEL_TEXTURES ((s16*)0xa4d7e0)
 #define GADGET_TEXTURE_PAGE (*(u32*)0xa4dae0)
 
-// The size of each of the game's two gadget model buffers
-#define GADGET_BUFFER_SIZE 0x30000
-
 // Moby class -> slot in the class table, and the class table itself
 #define CLASS_SLOTS ((u8*)0xa354c0)
 #define CLASS_SLOT_COUNT 0x800
@@ -30,22 +27,29 @@
 #define LEVEL_HEAP (*(u32**)0xa1091c)
 
 // Memory for the models has to be in the part of memory the GPU can read, like the level's. We take it from the top
-//  of the level's memory, which is left unused, and only if plenty is left for the game.
-#define OWNERS 1
-#define MODEL_MEMORY_SIZE (OWNERS * 2 * GADGET_BUFFER_SIZE)
+//  of the level's memory, which is left unused, and only if plenty is left for the game. It's split in slots the size
+//  of the biggest gadget model, each holding one model, shared by everyone holding that gadget.
+#define SLOT_SIZE 0x20000
+#define MIN_SLOTS 2
+#define MAX_SLOTS 5
 #define HEAP_LEFT_FOR_GAME 0x40000
 
-struct ModelBuffer {
+// A model drawn this recently may still be read by the GPU, so its slot isn't loaded over
+#define SLOT_IN_USE_TICKS 3
+
+struct ModelSlot {
     bool loaded;
     u16 o_class;
+    u32 last_used;
 };
 
 static u8* memory_ = nullptr;
 static u32* heap_ = nullptr;        // The level memory we took ours from, and its end after we did
 static u32 heap_end_ = 0;
 static u32 failed_heap_end_ = 0;    // Level memory that didn't have room for ours
-static ModelBuffer buffers_[OWNERS * 2];
-static int current_[OWNERS];
+static int n_slots_ = 0;
+static ModelSlot slots_[MAX_SLOTS];
+static u32 ticks_ = 0;
 
 static int gadget_index(u16 o_class) {
     u32 count = GADGET_MODEL_COUNT;
@@ -78,36 +82,52 @@ static bool prepare_memory() {
     }
 
     memory_ = nullptr;
-    memset(buffers_, 0, sizeof(buffers_));
+    n_slots_ = 0;
+    memset(slots_, 0, sizeof(slots_));
 
     u32 next_free = heap[1];
     u32 end = heap[2];
-    if (end == failed_heap_end_ || end < next_free || end - next_free < MODEL_MEMORY_SIZE + HEAP_LEFT_FOR_GAME) {
+    u32 spare = end > next_free ? end - next_free : 0;
+    int slots = spare > HEAP_LEFT_FOR_GAME ? (spare - HEAP_LEFT_FOR_GAME) / SLOT_SIZE : 0;
+    if (slots > MAX_SLOTS) {
+        slots = MAX_SLOTS;
+    }
+
+    if (end == failed_heap_end_ || slots < MIN_SLOTS) {
         if (end != failed_heap_end_) {
-            Logger::error("GadgetModels: not enough level memory for other players' weapons (0x%08x free)", end - next_free);
+            Logger::error("GadgetModels: not enough level memory for other players' weapons (0x%08x free)", spare);
         }
         failed_heap_end_ = end;
         return false;
     }
 
-    u32 start = (end - MODEL_MEMORY_SIZE) & ~0x7f;
+    u32 start = (end - slots * SLOT_SIZE) & ~0x7f;
     heap[2] = start;
 
     heap_ = heap;
     heap_end_ = start;
     memory_ = (u8*)start;
+    n_slots_ = slots;
 
-    Logger::info("GadgetModels: memory at 0x%08x", start);
+    Logger::info("GadgetModels: %d model slots at 0x%08x", slots, start);
     return true;
 }
 
-MobyClass* GadgetModels::load(u16 o_class, int owner) {
-    if (owner < 0 || owner >= OWNERS) {
-        return nullptr;
+void GadgetModels::on_tick() {
+    ticks_ += 1;
+}
+
+void GadgetModels::touch(MobyClass* model) {
+    if (memory_ == nullptr || (u8*)model < memory_ || (u8*)model >= memory_ + n_slots_ * SLOT_SIZE) {
+        return;
     }
 
+    slots_[((u8*)model - memory_) / SLOT_SIZE].last_used = ticks_;
+}
+
+MobyClass* GadgetModels::load(u16 o_class) {
     int index = gadget_index(o_class);
-    if (index < 0 || GADGET_MODEL_SIZE[index] > GADGET_BUFFER_SIZE || GADGET_MODEL_SOURCE[index] == 0) {
+    if (index < 0 || GADGET_MODEL_SIZE[index] > SLOT_SIZE || GADGET_MODEL_SOURCE[index] == 0) {
         return nullptr;
     }
 
@@ -115,21 +135,35 @@ MobyClass* GadgetModels::load(u16 o_class, int owner) {
         return nullptr;
     }
 
-    // One of the owner's buffers may have it already
-    for (int i = 0; i < 2; i++) {
-        int buffer = owner * 2 + i;
-        if (buffers_[buffer].loaded && buffers_[buffer].o_class == o_class) {
-            current_[owner] = i;
-            return (MobyClass*)(memory_ + buffer * GADGET_BUFFER_SIZE);
+    // Loaded already, maybe for someone else holding the same gadget
+    for (int i = 0; i < n_slots_; i++) {
+        if (slots_[i].loaded && slots_[i].o_class == o_class) {
+            slots_[i].last_used = ticks_;
+            return (MobyClass*)(memory_ + i * SLOT_SIZE);
         }
     }
 
-    // Load into the buffer the owner didn't use last, which the GPU could still be drawing from
-    current_[owner] ^= 1;
-    int buffer = owner * 2 + current_[owner];
-    u8* model = memory_ + buffer * GADGET_BUFFER_SIZE;
+    // Into the slot used longest ago, if nothing has drawn from it for a few frames
+    int slot = -1;
+    for (int i = 0; i < n_slots_; i++) {
+        if (!slots_[i].loaded) {
+            slot = i;
+            break;
+        }
 
-    buffers_[buffer].loaded = false;
+        if (ticks_ - slots_[i].last_used >= SLOT_IN_USE_TICKS &&
+            (slot < 0 || slots_[i].last_used < slots_[slot].last_used)) {
+            slot = i;
+        }
+    }
+
+    if (slot < 0) {
+        return nullptr;
+    }
+
+    u8* model = memory_ + slot * SLOT_SIZE;
+
+    slots_[slot].loaded = false;
     memcpy(model, (void*)GADGET_MODEL_SOURCE[index], GADGET_MODEL_SIZE[index]);
 
     // Like the game does when the player switches weapons
@@ -146,8 +180,9 @@ MobyClass* GadgetModels::load(u16 o_class, int owner) {
         }
     }
 
-    buffers_[buffer].loaded = true;
-    buffers_[buffer].o_class = o_class;
+    slots_[slot].loaded = true;
+    slots_[slot].o_class = o_class;
+    slots_[slot].last_used = ticks_;
 
     return (MobyClass*)model;
 }

@@ -196,7 +196,7 @@ static void remove_attachment(RemotePlayer* remote, int slot, bool mobys_exist) 
 //  can't draw it.
 static MobyClass* attachment_model(RemotePlayer* remote, u16 o_class) {
     if (GadgetModels::is_gadget(o_class)) {
-        return GadgetModels::load(o_class, remote - remote_players_);
+        return GadgetModels::load(o_class);
     }
 
     return GadgetModels::loaded_class(o_class);
@@ -312,6 +312,7 @@ void Mirror::receive(MPPacketPlayerState* packet, size_t len) {
 
 void Mirror::on_tick() {
     ticks_ += 1;
+    GadgetModels::on_tick();
 
     for (int i = 0; i < MIRROR_MAX_ORPHANS; i++) {
         Moby* moby = orphans_[i];
@@ -508,6 +509,7 @@ void Mirror::update_attachment(Moby* moby) {
 
             MPMirrorMoby* state = &remote->attachment_state[slot];
             apply_transform(moby, state);
+            GadgetModels::touch(moby->p_class);
 
             // Keep it in the update loop (0x2 takes it out) and let the game build its transform from our matrix
             moby->mode_bits = (state->mode_bits & ~(0x2 | 0x4)) | 0x100;
