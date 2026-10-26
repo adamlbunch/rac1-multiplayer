@@ -586,7 +586,7 @@ static bool before_update(Moby* moby) {
 
     // Its AI picks up from wherever the game running it is whenever it runs again
     EnemyRecord* record = record_to_show(enemy);
-    if (record != nullptr && (s8)record->state.state >= 0) {
+    if (record != nullptr && (s8)record->state.state >= 0 && !(sync_off_ & SYNC_OFF_STATE_COPY)) {
         moby->state = record->state.state;
     }
 

@@ -38,6 +38,7 @@ struct Client;
 #define SYNC_OFF_EFFECT_REPLAY 0x4    // Effects other games send aren't made
 #define SYNC_OFF_EFFECT_CAPTURE 0x8   // Effects aren't sent
 #define SYNC_OFF_ENEMY_SENDING 0x10   // Enemies aren't sent or taken over
+#define SYNC_OFF_STATE_COPY 0x20      // Enemies drawn from another game don't take on its AI state
 
 extern u32 sync_off_;
 
