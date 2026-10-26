@@ -70,6 +70,9 @@ typedef void (*MobyUpdateFunction)(Moby*);
 #define TRAIT_MOVES 0x2
 #define TRAITS_ENEMY (TRAIT_DAMAGEABLE | TRAIT_MOVES)
 
+// Frames a moby has to move in before it counts as moving on its own. Crates settle for a few after the level loads.
+#define MOVING_FRAMES 30
+
 struct EnemyRecord {
     u32 frame;  // 0 for none
     MPEnemyState state;
@@ -124,6 +127,7 @@ static u8 slots_[MAX_LEVEL_MOBYS];
 static u8 traits_[MAX_LEVEL_MOBYS];
 static u8 restarts_[MAX_LEVEL_MOBYS];
 static u8 blend_frames_[MAX_LEVEL_MOBYS];
+static u8 moving_frames_[MAX_LEVEL_MOBYS];
 
 static u32 ticks_ = 0;
 static u32 frame_ = 0;
@@ -496,7 +500,11 @@ static void after_update(Moby* moby) {
         if (moby->state >= 0 && (moby->position.x != position_before_.x || moby->position.y != position_before_.y ||
                                  moby->position.z != position_before_.z || moby->rotation.x != rotation_before_.x ||
                                  moby->rotation.y != rotation_before_.y || moby->rotation.z != rotation_before_.z)) {
-            traits_[updating_index_] |= TRAIT_MOVES;
+            if (moving_frames_[updating_index_] < MOVING_FRAMES) {
+                moving_frames_[updating_index_] += 1;
+            } else {
+                traits_[updating_index_] |= TRAIT_MOVES;
+            }
         }
 
         return;
@@ -980,6 +988,7 @@ void EnemySync::reset() {
     memset(traits_, 0, sizeof(traits_));
     memset(restarts_, 0, sizeof(restarts_));
     memset(blend_frames_, 0, sizeof(blend_frames_));
+    memset(moving_frames_, 0, sizeof(moving_frames_));
 
     updating_ = nullptr;
     updating_index_ = -1;
