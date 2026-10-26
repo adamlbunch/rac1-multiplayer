@@ -10,6 +10,7 @@
 
 #include "AttackerUpdates.h"
 #include "EffectSync.h"
+#include "MoverSync.h"
 #include "GadgetModels.h"
 #include "LevelMobys.h"
 #include "SpawnedMobys.h"
@@ -621,7 +622,14 @@ static bool before_update(Moby* moby) {
         return false;
     }
 
-    if (enemy == nullptr || !(owner_is_remote(enemy) || enemy->reacting) || (sync_off_ & SYNC_OFF_REMOTE_ENEMIES)) {
+    if (enemy == nullptr) {
+        if (!(sync_off_ & SYNC_OFF_MOVERS)) {
+            MoverSync::before_update(moby, updating_index_);
+        }
+        return true;
+    }
+
+    if (!(owner_is_remote(enemy) || enemy->reacting) || (sync_off_ & SYNC_OFF_REMOTE_ENEMIES)) {
         return true;
     }
 
@@ -755,6 +763,10 @@ static void after_transform(Moby* moby) {
     }
 
     if (enemy == nullptr && (traits_[index] & TRAITS_ENEMY) != TRAITS_ENEMY) {
+        // Things that move on their own but aren't enemies: in step with the game whose player is nearest
+        if ((traits_[index] & TRAIT_MOVES) && !(sync_off_ & SYNC_OFF_MOVERS)) {
+            MoverSync::after_update(moby, index, player_distance(moby));
+        }
         return;
     }
 
@@ -878,6 +890,7 @@ bool EnemySync::update_mobys() {
     updating_index_ = -1;
 
     send_states();
+    MoverSync::send(frame_);
     EffectSync::end_frame();
 
     return true;

@@ -18,6 +18,7 @@
 #include "../EnemySync.h"
 #include "../EffectSync.h"
 #include "../SoundSync.h"
+#include "../MoverSync.h"
 #include "../SyncedMoby.h"
 #include "../GadgetModels.h"
 
@@ -62,6 +63,7 @@ void GameClient::reset() {
     EnemySync::reset();
     EffectSync::reset();
     SoundSync::reset();
+    MoverSync::reset();
 
     for (size_t i = 0; i < monitored_addresses_.size(); i++) {
         delete monitored_addresses_[i];
@@ -887,6 +889,9 @@ bool GameClient::update(MPPacketHeader *header, void *packet_data) {
             case MP_PACKET_SOUNDS:
                 SoundSync::receive((MPPacketSounds*)packet_data, header->size);
                 break;
+            case MP_PACKET_MOVERS:
+                MoverSync::receive((MPPacketMovers*)packet_data, header->size);
+                break;
             default:
                 Logger::error("Received %ld bytes of unknown packet %d:", received(), header->type);
                 Logger::error("> Advertised size: %d", sizeof(MPPacketHeader) + header->size);
@@ -979,6 +984,7 @@ void GameClient::on_tick() {
         EnemySync::on_tick(Game::shared().connected_client());
         EffectSync::on_tick();
         SoundSync::on_tick();
+        MoverSync::on_tick();
         SyncedMoby::sweep();
     }
 

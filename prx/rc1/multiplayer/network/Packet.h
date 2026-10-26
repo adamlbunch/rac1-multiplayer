@@ -93,6 +93,7 @@ Here is an example of how a packet with type set to MP_PACKET_MOBY_UPDATE and no
 // The server passes packets from 38 to 63 on to the other players on the level as they are
 #define MP_PACKET_EFFECTS             38
 #define MP_PACKET_SOUNDS              39
+#define MP_PACKET_MOVERS              40
 
 #define MP_PACKET_FLAG_RPC           0x1
 
@@ -629,6 +630,28 @@ typedef struct {
     s16 index;            // Which sound
     s32 sound_flags;      // As the game passed them
 } MPSoundEvent;
+
+// The level's moving things that aren't enemies (platforms, trains, traffic, critters) run in every game as always,
+//  but take on the state of the game whose player is nearest, see MoverSync. Followed by `n_movers` MPMoverState,
+//  each followed by its `n_words` MPMoverWord.
+typedef struct {
+    u16 sender;           // Filled in by the server, see MPPacketPlayerState
+    u8 n_movers;
+    u8 pad;
+    u32 frame;            // Sender's frame counter, see MPPacketEnemyState
+} MPPacketMovers;
+
+typedef struct {
+    MPEnemyState moby;    // What it is, its state, where it is and its animation (spawn is always 0)
+    u16 n_words;          // How many of its variables follow: the ones that aren't what the level started them at
+    u16 pad;
+} MPMoverState;
+
+typedef struct {
+    u16 offset;           // In its variables
+    u16 pad;
+    u32 value;
+} MPMoverWord;
 
 #define MP_LEVEL_CONFIG_OPTION_BLOCK_MOBY_UID   1
 #define MP_LEVEL_CONFIG_OPTION_BLOCK_OCLASS     2
