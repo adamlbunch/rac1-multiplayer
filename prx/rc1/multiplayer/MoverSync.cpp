@@ -134,11 +134,12 @@ struct Mover {
     // Whether we said it isn't set up for a state another game put it in (said once)
     bool told_not_set_up;
 
-    // Its variables when its own update was done, to see whether something else changes them before it runs again:
-    //  then another moby drives it (a leader its group follows, a list it's on), and it's left to each game
-    u32 vars_sum;
-    bool vars_sum_valid;
-    bool driven;
+    // Its variables when its own update was done, to see which something else changes before it runs again: what
+    //  another moby keeps there (a leader its group follows, a list it's on, the traffic it's part of) is about that
+    //  moby in this game, and never taken from another game or sent
+    u8 after_update[VARS_MAX];
+    bool after_update_valid;
+    u32 external[VARS_MAX / 4 / 32];
 
     // A change of its state another game made, waiting to be made here
     bool pending_transition;
@@ -344,6 +345,11 @@ static bool holds_channel(Mover* mover, u16 offset) {
     return (mover->channels[offset / 4 / 32] & (1u << ((offset / 4) % 32))) != 0;
 }
 
+// Which of its variables something else writes, see Mover::external
+static bool external(Mover* mover, u16 offset) {
+    return (mover->external[offset / 4 / 32] & (1u << ((offset / 4) % 32))) != 0;
+}
+
 static Mover* find_mover(int index) {
     if (index < 0 || index >= MAX_LEVEL_MOBYS || slots_[index] == 0) {
         return nullptr;
@@ -436,7 +442,8 @@ static bool apply_words(Mover* mover, Moby* moby, u16 sender, MPMoverWord* words
 
     for (int i = 0; i < n_words; i++) {
         MPMoverWord* word = &words[i];
-        if (word->offset + 4 > mover->vars_size || holds_channel(mover, word->offset)) {
+        if (word->offset + 4 > mover->vars_size || holds_channel(mover, word->offset) ||
+            external(mover, word->offset)) {
             continue;
         }
 
@@ -474,7 +481,7 @@ static bool set_up_like_sender(Mover* mover, Moby* moby, const u32* pointers, MP
     u8* vars = (u8*)moby->vars;
     for (u16 offset = 0; offset + 4 <= mover->vars_size; offset += 4) {
         u16 word = offset / 4;
-        if (!(pointers[word / 32] & (1u << (word % 32)))) {
+        if (!(pointers[word / 32] & (1u << (word % 32))) || external(mover, offset)) {
             continue;
         }
 
@@ -551,40 +558,29 @@ static void apply_transition(Mover* mover, Moby* moby) {
     mover->transition_tick = ticks_;
 }
 
-// The sound system clears the channel a mover keeps for its looping sound by itself: not counted
-static u32 vars_sum(Mover* mover, Moby* moby) {
+// Which of its variables something else changed since its own update (the sound system clearing the channel of its
+//  looping sound aside)
+static void note_external(Mover* mover, Moby* moby) {
     u8* vars = (u8*)moby->vars;
-    u32 sum = 0;
-    for (u16 offset = 0; vars != nullptr && offset + 4 <= mover->vars_size; offset += 4) {
-        if (holds_channel(mover, offset)) {
-            continue;
-        }
-
-        u32 value;
-        memcpy(&value, vars + offset, 4);
-        sum = ((sum << 1) | (sum >> 31)) ^ value;
+    if (!mover->after_update_valid || vars == nullptr) {
+        return;
     }
 
-    return sum;
+    for (u16 offset = 0; offset + 4 <= mover->vars_size; offset += 4) {
+        if (!holds_channel(mover, offset) && memcmp(vars + offset, mover->after_update + offset, 4) != 0) {
+            mover->external[offset / 4 / 32] |= 1u << ((offset / 4) % 32);
+        }
+    }
 }
 
 void MoverSync::before_update(Moby* moby, int index) {
     Mover* mover = find_mover(index);
-    if (mover == nullptr || moby->o_class != (short)mover->o_class || mover->driven) {
+    if (mover == nullptr || moby->o_class != (short)mover->o_class) {
         return;
     }
 
-    // Something else changed its variables since its own update: other mobys drive it, and what they do with it is up
-    //  to each game. Taking on another game's state of it would tell those mobys here what isn't so (Umbris' swarms
-    //  crashed following indexes their leader in the other game gave them).
-    if (mover->vars_sum_valid && vars_sum(mover, moby) != mover->vars_sum) {
-        mover->driven = true;
-        mover->pending = false;
-        mover->pending_transition = false;
-        Logger::debug("MoverSync: moby %d (o_class %d) is driven by other mobys, left to each game", mover->uid,
-                      mover->o_class);
-        return;
-    }
+    // Umbris' swarms crashed following indexes their leader in the other game had given them
+    note_external(mover, moby);
 
     note_channels(mover, moby);
 
@@ -677,7 +673,7 @@ static void fill_state(Mover* mover, Moby* moby, float distance, OutgoingMover* 
     u16 n_words = 0;
     u8* vars = (u8*)moby->vars;
     for (u16 offset = 0; vars != nullptr && offset + 4 <= mover->vars_size; offset += 4) {
-        if (holds_channel(mover, offset)) {
+        if (holds_channel(mover, offset) || external(mover, offset)) {
             continue;
         }
 
@@ -721,7 +717,8 @@ static void fill_state(Mover* mover, Moby* moby, float distance, OutgoingMover* 
     for (int i = 0; !all_words && vars != nullptr && i < ROTATING_WORDS && n_vars > 0 && n_words < MAX_WORDS; i++) {
         u16 word = mover->next_word % n_vars;
         mover->next_word = (mover->next_word + 1) % n_vars;
-        if ((mover->changed[word / 32] & (1u << (word % 32))) || holds_channel(mover, word * 4)) {
+        if ((mover->changed[word / 32] & (1u << (word % 32))) || holds_channel(mover, word * 4) ||
+            external(mover, word * 4)) {
             continue;
         }
 
@@ -788,13 +785,9 @@ static void queue_transition(Mover* mover, Moby* moby, float distance, s8 state_
 
 void MoverSync::after_update(Moby* moby, int index, float distance, bool moves, bool changes_state, s8 state_before) {
     Mover* known = find_mover(index);
-    if (known != nullptr && moby->o_class == (short)known->o_class) {
-        if (known->driven) {
-            return;
-        }
-
-        known->vars_sum = vars_sum(known, moby);
-        known->vars_sum_valid = true;
+    if (known != nullptr && moby->o_class == (short)known->o_class && moby->vars != nullptr) {
+        memcpy(known->after_update, moby->vars, known->vars_size);
+        known->after_update_valid = true;
     }
 
     u16 uid, spawn;
