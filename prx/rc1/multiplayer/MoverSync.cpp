@@ -134,6 +134,12 @@ struct Mover {
     // Whether we said it isn't set up for a state another game put it in (said once)
     bool told_not_set_up;
 
+    // Its variables when its own update was done, to see whether something else changes them before it runs again:
+    //  then another moby drives it (a leader its group follows, a list it's on), and it's left to each game
+    u32 vars_sum;
+    bool vars_sum_valid;
+    bool driven;
+
     // A change of its state another game made, waiting to be made here
     bool pending_transition;
     u16 transition_sender;
@@ -545,9 +551,38 @@ static void apply_transition(Mover* mover, Moby* moby) {
     mover->transition_tick = ticks_;
 }
 
+// The sound system clears the channel a mover keeps for its looping sound by itself: not counted
+static u32 vars_sum(Mover* mover, Moby* moby) {
+    u8* vars = (u8*)moby->vars;
+    u32 sum = 0;
+    for (u16 offset = 0; vars != nullptr && offset + 4 <= mover->vars_size; offset += 4) {
+        if (holds_channel(mover, offset)) {
+            continue;
+        }
+
+        u32 value;
+        memcpy(&value, vars + offset, 4);
+        sum = ((sum << 1) | (sum >> 31)) ^ value;
+    }
+
+    return sum;
+}
+
 void MoverSync::before_update(Moby* moby, int index) {
     Mover* mover = find_mover(index);
-    if (mover == nullptr || moby->o_class != (short)mover->o_class) {
+    if (mover == nullptr || moby->o_class != (short)mover->o_class || mover->driven) {
+        return;
+    }
+
+    // Something else changed its variables since its own update: other mobys drive it, and what they do with it is up
+    //  to each game. Taking on another game's state of it would tell those mobys here what isn't so (Umbris' swarms
+    //  crashed following indexes their leader in the other game gave them).
+    if (mover->vars_sum_valid && vars_sum(mover, moby) != mover->vars_sum) {
+        mover->driven = true;
+        mover->pending = false;
+        mover->pending_transition = false;
+        Logger::debug("MoverSync: moby %d (o_class %d) is driven by other mobys, left to each game", mover->uid,
+                      mover->o_class);
         return;
     }
 
@@ -752,6 +787,16 @@ static void queue_transition(Mover* mover, Moby* moby, float distance, s8 state_
 }
 
 void MoverSync::after_update(Moby* moby, int index, float distance, bool moves, bool changes_state, s8 state_before) {
+    Mover* known = find_mover(index);
+    if (known != nullptr && moby->o_class == (short)known->o_class) {
+        if (known->driven) {
+            return;
+        }
+
+        known->vars_sum = vars_sum(known, moby);
+        known->vars_sum_valid = true;
+    }
+
     u16 uid, spawn;
     if (moby->state < 0 || !syncable_class(moby) || !SpawnedMobys::identify(moby, &uid, &spawn) || spawn != 0) {
         return;
