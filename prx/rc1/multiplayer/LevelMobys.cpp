@@ -47,6 +47,17 @@ static Moby* lookup(u16 uid) {
     return moby;
 }
 
+Moby* LevelMobys::find(u16 uid) {
+    Moby* moby = lookup(uid);
+
+    if (moby == nullptr || moby->uid != uid || moby->state < 0 || moby == ratchet_moby ||
+        moby->p_update == LEVEL_MOBYS_MP_UPDATE_FUNC) {
+        return nullptr;
+    }
+
+    return moby;
+}
+
 Moby* LevelMobys::find(u16 uid, u16 o_class) {
     Moby* moby = lookup(uid);
 

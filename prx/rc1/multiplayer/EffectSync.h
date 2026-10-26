@@ -5,7 +5,9 @@
 //
 // So when our player, the weapons they hold or the things they fired make effects, we send the effect records. The
 //  other games make the same records, at the frame of that player's replayed pose they belong with (see Mirror), and
-//  the game animates them just like ours. Same for the enemies our game runs for everyone (see EnemySync) and what
+//  the game animates them just like ours. Some effects stay with a moby (on one of its bones, say) and hold its
+//  address, which means something else in other games: those are sent as which moby it is (the player, what they
+//  hold, a moby placed in the level), and other games put in their own copy of it. Same for the enemies our game runs for everyone (see EnemySync) and what
 //  they fire: other games only show what those make here, not what their own copy makes reacting to a hit.
 //
 

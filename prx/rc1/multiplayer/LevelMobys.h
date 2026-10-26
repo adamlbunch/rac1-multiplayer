@@ -35,6 +35,9 @@ struct LevelMobys {
 
     // The level's moby with this UID if it's alive and of that class
     static Moby* find(u16 uid, u16 o_class);
+
+    // The level's moby with this UID if it's alive, whatever its class
+    static Moby* find(u16 uid);
 };
 
 #endif //RAC1_MULTIPLAYER_LEVELMOBYS_H

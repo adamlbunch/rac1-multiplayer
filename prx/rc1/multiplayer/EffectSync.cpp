@@ -7,8 +7,10 @@
 #include <rc1/Game.h>
 
 #include "EnemySync.h"
+#include "LevelMobys.h"
 #include "Mirror.h"
 #include "SoundSync.h"
+#include "SpawnedMobys.h"
 #include "network/GameClient.h"
 
 // The game's effect pool: 4096 records of 64 bytes, and a bit per record that's in use. The first byte of a record is
@@ -42,6 +44,13 @@
 
 // And none waits longer than this many ticks
 #define EFFECT_MAX_WAIT 60
+
+// A moby's address in an effect record, as other games know that moby: the sender's player or what they have in an
+//  attachment slot (see Mirror), or a moby placed in the level by its UID. The second byte is how far into the moby
+//  the address points, in words.
+#define REFERENCE_HERO 0xf1
+#define REFERENCE_ATTACHMENT 0xf2
+#define REFERENCE_LEVEL_MOBY 0xf3
 
 extern "C" u8* _c_allocate_effect(u32 type);
 
@@ -225,6 +234,77 @@ void EffectSync::after_player_update() {
     end_frame();
 }
 
+// Puts in which moby the record's moby addresses are, as other games know it. False if it holds the address of one
+//  they can't know.
+static bool encode_references(u8* data) {
+    Moby* start = LEVEL_MOBYS_START;
+    for (int offset = 4; offset < MP_EFFECT_SIZE; offset += 4) {
+        u32 value;
+        memcpy(&value, data + offset, 4);
+        if (start == nullptr || value < (u32)start || value >= (u32)moby_ptr_end) {
+            continue;
+        }
+
+        Moby* moby = start + (value - (u32)start) / sizeof(Moby);
+        u32 into = (value - (u32)moby) / 4;
+        u32 reference = 0;
+
+        if (moby == ratchet_moby) {
+            reference = (REFERENCE_HERO << 24) | (into << 16);
+        }
+
+        for (int i = 0; i < GADGET_MOBYS && reference == 0; i++) {
+            if (ours_[1 + i] == moby && moby != nullptr) {
+                reference = (REFERENCE_ATTACHMENT << 24) | (into << 16) | i;
+            }
+        }
+
+        u16 uid, spawn;
+        if (reference == 0 && SpawnedMobys::identify(moby, &uid, &spawn) && spawn == 0) {
+            reference = (REFERENCE_LEVEL_MOBY << 24) | (into << 16) | uid;
+        }
+
+        if (reference == 0) {
+            return false;
+        }
+
+        memcpy(data + offset, &reference, 4);
+    }
+
+    return true;
+}
+
+// Puts our copies of the mobys the record is about in it. False if we don't have one.
+static bool decode_references(u16 sender, u8* data) {
+    for (int offset = 4; offset < MP_EFFECT_SIZE; offset += 4) {
+        u32 value;
+        memcpy(&value, data + offset, 4);
+
+        u8 kind = value >> 24;
+        if (kind != REFERENCE_HERO && kind != REFERENCE_ATTACHMENT && kind != REFERENCE_LEVEL_MOBY) {
+            continue;
+        }
+
+        Moby* moby = nullptr;
+        if (kind == REFERENCE_HERO) {
+            moby = Mirror::hero_of(sender);
+        } else if (kind == REFERENCE_ATTACHMENT) {
+            moby = Mirror::attachment_of(sender, value & 0xffff);
+        } else {
+            moby = LevelMobys::find(value & 0xffff);
+        }
+
+        if (moby == nullptr) {
+            return false;
+        }
+
+        u32 address = (u32)moby + ((value >> 16) & 0xff) * 4;
+        memcpy(data + offset, &address, 4);
+    }
+
+    return true;
+}
+
 void EffectSync::end_frame() {
     Client* client = Game::shared().connected_client();
     if (client == nullptr || n_captured_ == 0 || ratchet_moby == nullptr ||
@@ -239,6 +319,17 @@ void EffectSync::end_frame() {
             captured_[n_effects++] = captured_[i];
         }
     }
+
+    // What goes out, with the mobys they're about as other games know them
+    static u8 records[MAX_CAPTURED][MP_EFFECT_SIZE];
+    int n_records = 0;
+    for (int i = 0; i < n_effects; i++) {
+        memcpy(records[n_records], captured_[i], MP_EFFECT_SIZE);
+        if (encode_references(records[n_records])) {
+            n_records += 1;
+        }
+    }
+    n_effects = n_records;
 
     // As many as fit in a packet's own buffer, so nothing is allocated for them
     const size_t max_body = sizeof(((Packet*)0)->payload_buffer) - sizeof(MPPacketHeader);
@@ -257,7 +348,7 @@ void EffectSync::end_frame() {
 
         u8* data = (u8*)body + sizeof(MPPacketEffects);
         for (int i = 0; i < count; i++) {
-            memcpy(data + i * MP_EFFECT_SIZE, captured_[sent + i], MP_EFFECT_SIZE);
+            memcpy(data + i * MP_EFFECT_SIZE, records[sent + i], MP_EFFECT_SIZE);
         }
 
         client->send(&packet);
@@ -314,12 +405,17 @@ void EffectSync::on_tick() {
             continue;
         }
 
+        effect->used = false;
+
+        // About a moby we have no copy of: not made
+        if (!decode_references(effect->sender, effect->data)) {
+            continue;
+        }
+
         u8* made = _c_allocate_effect(effect->data[0]);
         if (made != nullptr) {
             memcpy(made + 1, effect->data + 1, MP_EFFECT_SIZE - 1);
         }
-
-        effect->used = false;
     }
 }
 
