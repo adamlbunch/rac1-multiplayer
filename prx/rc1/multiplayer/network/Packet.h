@@ -506,10 +506,14 @@ typedef struct {
     //  run by the sender's game, see MPPacketEnemyState), or the sender's player when source_o_class is 0xffff.
     u16 source_uid;
     u16 source_o_class;
+    // For mobys spawned by the level's own: how many their spawner had spawned before, plus one (see SpawnedMobys).
+    //  The UID is then the spawner's. 0 for mobys placed in the level.
+    u16 spawn;
+    u16 source_spawn;
 } MPPacketMobyHit;
 
 // What older games send of MPPacketMobyHit
-#define MP_MOBY_HIT_V14_SIZE (sizeof(MPPacketMobyHit) - 4)
+#define MP_MOBY_HIT_V14_SIZE (sizeof(MPPacketMobyHit) - 8)
 
 // One of the level's mobys a player had damaged is gone in their game. Backs up MPPacketMobyHit for kills that
 //  don't come down to damage the other games could apply.
@@ -517,7 +521,7 @@ typedef struct {
     u16 sender;
     u16 uid;
     u16 o_class;
-    u16 pad;
+    u16 spawn;            // See MPPacketMobyHit, 0 from older games
 } MPPacketMobyKilled;
 
 // The animation part of a moby's state: the game's own fields from 0x50, see Mirror.cpp
@@ -555,10 +559,11 @@ typedef struct {
 typedef struct {
     u16 uid;
     u16 o_class;
+    u16 spawn;            // See MPPacketMobyHit
     u8 flags;
     u8 state;             // The moby's own state, the one its AI runs on
     u8 alpha;
-    u8 pad;
+    u8 pad[3];
     float distance;       // How far the sender's player is from it, to settle which game runs it
     float position[3];
     float rotation[3];
@@ -630,7 +635,7 @@ struct Packet {
     static Packet* make_file_upload_part_packet(u8 file_type, void* data, u32 len, u32 offset);
     static Packet* make_player_standing_on_moby_packet(u16 uuid);
     static Packet* make_ui_reset_packet();
-    static Packet* make_moby_killed_packet(u16 uid, u16 o_class);
+    static Packet* make_moby_killed_packet(u16 uid, u16 o_class, u16 spawn);
 };
 
 #endif

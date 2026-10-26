@@ -257,10 +257,6 @@ extern "C" void _c_on_effect_allocated(u8* effect) {
     EffectSync::on_allocated(effect);
 }
 
-extern "C" void _c_on_moby_spawned(Moby* moby) {
-    EffectSync::on_spawned(moby);
-}
-
 extern "C" void _c_before_player_update() {
     EffectSync::before_player_update();
 }

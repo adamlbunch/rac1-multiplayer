@@ -8,6 +8,7 @@
 
 #include "EnemySync.h"
 #include "LevelMobys.h"
+#include "SpawnedMobys.h"
 #include "network/GameClient.h"
 
 // How long a moby someone else destroyed gets to go away on its own (play its death) before we remove it
@@ -29,16 +30,22 @@
 #define REMOTE_HIT_BOLTS_TICKS (60 * 6)
 #define REMOTE_KILL_BOLTS_TICKS (60 * 2)
 
+// What all games know a moby by, see SpawnedMobys
+struct MobyKey {
+    u16 uid;
+    u16 spawn;
+    u16 o_class;
+};
+
 struct HitMoby {
     Moby* moby;
-    u16 uid;
-    u16 o_class;
+    MobyKey key;
     u32 last_hit_tick;
 };
 
 struct PendingKill {
-    u16 uid;
-    u16 o_class;
+    bool used;
+    MobyKey key;
     u32 deadline;
 };
 
@@ -46,8 +53,7 @@ struct PendingKill {
 //  bolts count is shared, so only the game of the player who made the hit keeps them.
 struct RemoteHit {
     Moby* moby;
-    u16 uid;
-    u16 o_class;
+    MobyKey key;
     Vec4 position;
     u32 hit_tick;
     u32 gone_tick;
@@ -69,16 +75,32 @@ static bool plausible_moby(Moby* moby) {
     return address >= 0x10000 && address < 0xC0000000 && (address & 0xf) == 0;
 }
 
-// Placed in the level (as opposed to spawned while playing), so every game has it under the same UID
-static bool is_level_moby(Moby* moby) {
-    return LevelMobys::index_of(moby) >= 0;
+// What other games know the moby by: placed in the level, or spawned by one of those. False for anything else, like
+//  players and what they fired. Also works on a moby that just died.
+static bool key_of(Moby* moby, MobyKey* key) {
+    if (!plausible_moby(moby) || !SpawnedMobys::identify(moby, &key->uid, &key->spawn)) {
+        return false;
+    }
+
+    key->o_class = moby->o_class;
+    return true;
 }
 
-static void remember_hit(Moby* moby) {
+static bool same_key(const MobyKey* a, const MobyKey* b) {
+    return a->uid == b->uid && a->spawn == b->spawn && a->o_class == b->o_class;
+}
+
+// The moby is alive and still the one we knew under this key (its slot didn't go to another)
+static bool still(Moby* moby, const MobyKey* key) {
+    MobyKey now;
+    return moby->state >= 0 && key_of(moby, &now) && same_key(&now, key);
+}
+
+static void remember_hit(Moby* moby, const MobyKey* key) {
     HitMoby* slot = nullptr;
 
     for (int i = 0; i < MAX_HIT_MOBYS && slot == nullptr; i++) {
-        if (hit_mobys_[i].moby == moby && hit_mobys_[i].uid == moby->uid) {
+        if (hit_mobys_[i].moby == moby && same_key(&hit_mobys_[i].key, key)) {
             slot = &hit_mobys_[i];
         }
     }
@@ -100,8 +122,7 @@ static void remember_hit(Moby* moby) {
     }
 
     slot->moby = moby;
-    slot->uid = moby->uid;
-    slot->o_class = moby->o_class;
+    slot->key = *key;
     slot->last_hit_tick = ticks_;
 }
 
@@ -129,16 +150,18 @@ static void send_record(Client* client, u8* record) {
     Moby* target = *(Moby**)(record + 0x34);
     Moby* source = *(Moby**)(record + 0x20);
 
-    // The target can already be gone if the hit destroyed it right away (crates), but its UID is still there
-    if (!plausible_moby(target) || !is_level_moby(target)) {
+    // The target can already be gone if the hit destroyed it right away (crates), but it's still where it was
+    MobyKey target_key;
+    if (!key_of(target, &target_key)) {
         return;
     }
 
     // The level hurting itself (hazards, a crate's blast) happens in every game on its own, apart from what the
     //  enemies we run do (see EnemySync). When it's set off by another player's hit, like a stack of crates they
     //  knocked over, what it destroys is theirs as well.
+    MobyKey source_key;
     bool from_enemy = false;
-    if (plausible_moby(source) && is_level_moby(source)) {
+    if (key_of(source, &source_key)) {
         if (!EnemySync::is_owned(source)) {
             if (is_remote_hit(source)) {
                 remember_remote_hit(target);
@@ -154,7 +177,7 @@ static void send_record(Client* client, u8* record) {
 
     // The server's level scripts already sync these
     GameClient* game_client = (GameClient*)client;
-    if (game_client->is_hybrid_moby(target->uid)) {
+    if (target_key.spawn == 0 && game_client->is_hybrid_moby(target_key.uid)) {
         return;
     }
 
@@ -162,10 +185,12 @@ static void send_record(Client* client, u8* record) {
     packet->header->type = MP_PACKET_MOBY_HIT;
 
     MPPacketMobyHit* hit = (MPPacketMobyHit*)packet->body;
-    hit->uid = target->uid;
-    hit->o_class = target->o_class;
-    hit->source_uid = from_enemy ? source->uid : 0;
-    hit->source_o_class = from_enemy ? source->o_class : 0xffff;
+    hit->uid = target_key.uid;
+    hit->o_class = target_key.o_class;
+    hit->spawn = target_key.spawn;
+    hit->source_uid = from_enemy ? source_key.uid : 0;
+    hit->source_o_class = from_enemy ? source_key.o_class : 0xffff;
+    hit->source_spawn = from_enemy ? source_key.spawn : 0;
     memcpy(&hit->vector0, record + 0x00, sizeof(Vec4));
     memcpy(&hit->vector1, record + 0x10, sizeof(Vec4));
     memcpy(&hit->flags, record + 0x24, sizeof(u32));
@@ -178,9 +203,9 @@ static void send_record(Client* client, u8* record) {
     client->send_ack(packet);
 
     if (target->state < 0) {
-        client->send_ack(Packet::make_moby_killed_packet(target->uid, target->o_class));
+        client->send_ack(Packet::make_moby_killed_packet(target_key.uid, target_key.o_class, target_key.spawn));
     } else {
-        remember_hit(target);
+        remember_hit(target, &target_key);
     }
 }
 
@@ -191,9 +216,8 @@ static void check_hit_mobys(Client* client) {
             continue;
         }
 
-        Moby* moby = hit->moby;
-        if (moby->state < 0 || moby->uid != hit->uid || moby->o_class != hit->o_class) {
-            client->send_ack(Packet::make_moby_killed_packet(hit->uid, hit->o_class));
+        if (!still(hit->moby, &hit->key)) {
+            client->send_ack(Packet::make_moby_killed_packet(hit->key.uid, hit->key.o_class, hit->key.spawn));
             hit->moby = nullptr;
             continue;
         }
@@ -207,21 +231,22 @@ static void check_hit_mobys(Client* client) {
 static void apply_pending_kills() {
     for (int i = 0; i < MAX_PENDING_KILLS; i++) {
         PendingKill* kill = &pending_kills_[i];
-        if (kill->o_class == 0xffff) {
+        if (!kill->used) {
             continue;
         }
 
-        Moby* moby = LevelMobys::find(kill->uid, kill->o_class);
+        Moby* moby = SpawnedMobys::find(kill->key.uid, kill->key.spawn, kill->key.o_class);
         if (moby == nullptr) {
-            kill->o_class = 0xffff;
+            kill->used = false;
             continue;
         }
 
         if ((s32)(ticks_ - kill->deadline) >= 0) {
-            Logger::debug("WorldSync: removing moby %d (o_class %d) another player destroyed", kill->uid, kill->o_class);
+            Logger::debug("WorldSync: removing moby %d/%d (o_class %d) another player destroyed", kill->key.uid,
+                          kill->key.spawn, kill->key.o_class);
             moby->state = -1;
             delete_moby(moby);
-            kill->o_class = 0xffff;
+            kill->used = false;
         }
     }
 }
@@ -235,14 +260,13 @@ static void remove_remote_hit_bolts() {
             continue;
         }
 
-        Moby* moby = hit->moby;
-        if (!hit->gone && (moby->state < 0 || moby->uid != hit->uid || moby->o_class != hit->o_class)) {
+        if (!hit->gone && !still(hit->moby, &hit->key)) {
             hit->gone = true;
             hit->gone_tick = ticks_;
         }
 
         if (!hit->gone) {
-            hit->position = moby->position;
+            hit->position = hit->moby->position;
         }
 
         if ((hit->gone && ticks_ - hit->gone_tick > REMOTE_KILL_BOLTS_TICKS) ||
@@ -309,15 +333,18 @@ void WorldSync::on_tick(Client* client) {
 }
 
 void WorldSync::receive_hit(MPPacketMobyHit* hit, size_t len) {
-    Moby* target = LevelMobys::find(hit->uid, hit->o_class);
+    // Older games only send hits on mobys placed in the level, made by their player
+    bool full = len >= sizeof(MPPacketMobyHit);
+
+    Moby* target = SpawnedMobys::find(hit->uid, full ? hit->spawn : 0, hit->o_class);
     if (target == nullptr) {
         return;
     }
 
     // Whoever made the hit: the enemy that did, or the player's copy in our game if we have it
     Moby* source = nullptr;
-    if (len >= sizeof(MPPacketMobyHit) && hit->source_o_class != 0xffff) {
-        source = LevelMobys::find(hit->source_uid, hit->source_o_class);
+    if (full && hit->source_o_class != 0xffff) {
+        source = SpawnedMobys::find(hit->source_uid, hit->source_spawn, hit->source_o_class);
     } else {
         GameClient* client = (GameClient*)Game::shared().client();
         source = client != nullptr ? client->moby_for_uuid(hit->sender) : nullptr;
@@ -353,6 +380,11 @@ void WorldSync::receive_hit(MPPacketMobyHit* hit, size_t len) {
 
 // Another player's hit is the latest on this moby now
 static void remember_remote_hit(Moby* target) {
+    MobyKey key;
+    if (!key_of(target, &key)) {
+        return;
+    }
+
     RemoteHit* slot = &remote_hits_[0];
     for (int i = 0; i < MAX_REMOTE_HITS; i++) {
         if (remote_hits_[i].moby == target) {
@@ -366,29 +398,33 @@ static void remember_remote_hit(Moby* target) {
     }
 
     slot->moby = target;
-    slot->uid = target->uid;
-    slot->o_class = target->o_class;
+    slot->key = key;
     slot->position = target->position;
     slot->hit_tick = ticks_;
     slot->gone = false;
 }
 
 void WorldSync::receive_killed(MPPacketMobyKilled* killed) {
+    MobyKey key;
+    key.uid = killed->uid;
+    key.spawn = killed->spawn;
+    key.o_class = killed->o_class;
+
     PendingKill* free_slot = nullptr;
     for (int i = 0; i < MAX_PENDING_KILLS; i++) {
         PendingKill* kill = &pending_kills_[i];
-        if (kill->o_class != 0xffff && kill->uid == killed->uid && kill->o_class == killed->o_class) {
+        if (kill->used && same_key(&kill->key, &key)) {
             return;
         }
 
-        if (kill->o_class == 0xffff && free_slot == nullptr) {
+        if (!kill->used && free_slot == nullptr) {
             free_slot = kill;
         }
     }
 
     if (free_slot != nullptr) {
-        free_slot->uid = killed->uid;
-        free_slot->o_class = killed->o_class;
+        free_slot->used = true;
+        free_slot->key = key;
         free_slot->deadline = ticks_ + KILL_GRACE_TICKS;
     }
 }
@@ -400,9 +436,7 @@ void WorldSync::ignore_record(u32 index) {
 void WorldSync::reset() {
     memset(hit_mobys_, 0, sizeof(hit_mobys_));
     memset(remote_hits_, 0, sizeof(remote_hits_));
-
-    // Free pending kills are marked with o_class 0xffff, since UID 0 is a real one
-    memset(pending_kills_, 0xff, sizeof(pending_kills_));
+    memset(pending_kills_, 0, sizeof(pending_kills_));
     injected_ = 0;
     next_record_ = DAMAGE_NEXT_RECORD % DAMAGE_RECORD_COUNT;
 }

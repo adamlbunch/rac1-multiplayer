@@ -10,6 +10,7 @@
 
 #include "EffectSync.h"
 #include "LevelMobys.h"
+#include "SpawnedMobys.h"
 #include "Mirror.h"
 #include "MobyAnimation.h"
 #include "WorldSync.h"
@@ -83,7 +84,8 @@ struct EnemyRecord {
 struct SyncedEnemy {
     bool used;
     u16 index;              // In our moby table
-    u16 uid;
+    u16 uid;                // What other games know it by, see SpawnedMobys
+    u16 spawn;
     u16 o_class;
 
     u16 owner;              // The game running it: OWNER_SELF, or the other player's ID
@@ -217,7 +219,7 @@ static SyncedEnemy* add_enemy(int index, Moby* moby) {
             memset(enemy, 0, sizeof(SyncedEnemy));
             enemy->used = true;
             enemy->index = index;
-            enemy->uid = moby->uid;
+            SpawnedMobys::identify(moby, &enemy->uid, &enemy->spawn);
             enemy->o_class = moby->o_class;
             enemy->owner = OWNER_NONE;
             slots_[index] = i + 1;
@@ -340,7 +342,8 @@ static void capture_state(SyncedEnemy* enemy, Moby* moby, float distance, MPEnem
                           MPEnemyMatrix* matrix) {
     memset(state, 0, sizeof(MPEnemyState));
 
-    state->uid = moby->uid;
+    state->uid = enemy->uid;
+    state->spawn = enemy->spawn;
     state->o_class = moby->o_class;
     state->state = moby->state;
     state->alpha = moby->alpha;
@@ -445,14 +448,25 @@ static void send_states() {
     n_outgoing_ = 0;
 }
 
+// Position in our moby table of a moby other games know too (placed in the level or spawned by one that is, see
+//  SpawnedMobys), or -1
+static int sync_index(Moby* moby) {
+    u16 uid, spawn;
+    if (moby < LEVEL_MOBYS_START || moby >= moby_ptr_end || !SpawnedMobys::identify(moby, &uid, &spawn)) {
+        return -1;
+    }
+
+    int index = moby - LEVEL_MOBYS_START;
+    return index < MAX_LEVEL_MOBYS ? index : -1;
+}
+
 // Before the moby's animation step and update. Returns whether its update should run.
 static bool before_update(Moby* moby) {
     updating_ = moby;
     updating_enemy_ = nullptr;
-    updating_index_ = LevelMobys::index_of(moby);
+    updating_index_ = sync_index(moby);
 
-    if (updating_index_ < 0 || updating_index_ >= MAX_LEVEL_MOBYS) {
-        updating_index_ = -1;
+    if (updating_index_ < 0) {
         return true;
     }
 
@@ -611,14 +625,16 @@ static void after_transform(Moby* moby) {
             }
         }
 
-        Logger::debug("EnemySync %u: running moby %d (o_class %d) for everyone", ticks_, moby->uid, moby->o_class);
+        Logger::debug("EnemySync %u: running moby %d/%d (o_class %d) for everyone", ticks_, enemy->uid, enemy->spawn,
+                      moby->o_class);
         enemy->owner = OWNER_SELF;
         enemy->animation.valid = false;
     }
 
     // Another game asked for it: this frame's state is the last one we run, the claimant picks up from there
     if (enemy->handoff_to != 0 && ticks_ - enemy->handoff_tick < CLAIM_TIMEOUT) {
-        Logger::debug("EnemySync %u: handing moby %d (o_class %d) over to player %d", ticks_, moby->uid, moby->o_class,
+        Logger::debug("EnemySync %u: handing moby %d/%d (o_class %d) over to player %d", ticks_, enemy->uid,
+                      enemy->spawn, moby->o_class,
                       enemy->handoff_to);
 
         enemy->handoff.frame = frame_;
@@ -764,16 +780,13 @@ void EnemySync::on_tick(Client* client) {
             continue;
         }
 
-        if (enemy->index >= LevelMobys::count()) {
-            remove_enemy(enemy);
-            continue;
-        }
-
         Moby* moby = LEVEL_MOBYS_START + enemy->index;
-        if (moby->state < 0 || moby->uid != enemy->uid || moby->o_class != (short)enemy->o_class) {
+        u16 uid, spawn;
+        if (moby >= moby_ptr_end || moby->state < 0 || moby->o_class != (short)enemy->o_class ||
+            !SpawnedMobys::identify(moby, &uid, &spawn) || uid != enemy->uid || spawn != enemy->spawn) {
             // Gone in our game. If we ran it, it goes in the others too.
             if (enemy->owner == OWNER_SELF) {
-                client->send_ack(Packet::make_moby_killed_packet(enemy->uid, enemy->o_class));
+                client->send_ack(Packet::make_moby_killed_packet(enemy->uid, enemy->o_class, enemy->spawn));
             }
 
             remove_enemy(enemy);
@@ -790,9 +803,9 @@ void EnemySync::on_tick(Client* client) {
 static void receive_state(EnemySender* sender_info, u32 frame, MPEnemyState* state, MPEnemyMatrix* matrix) {
     u16 sender = sender_info->uuid;
 
-    Moby* moby = LevelMobys::find(state->uid, state->o_class);
-    int index = LevelMobys::index_of(moby);
-    if (moby == nullptr || index < 0 || index >= MAX_LEVEL_MOBYS) {
+    Moby* moby = SpawnedMobys::find(state->uid, state->spawn, state->o_class);
+    int index = sync_index(moby);
+    if (moby == nullptr || index < 0) {
         return;
     }
 
@@ -814,8 +827,8 @@ static void receive_state(EnemySender* sender_info, u32 frame, MPEnemyState* sta
         if (enemy != nullptr && enemy->owner == sender && enemy->claim_tick != 0 &&
             ticks_ - enemy->claim_tick < CLAIM_TIMEOUT) {
             // The game running it handed it to us: it picks up from exactly where that game left it
-            Logger::debug("EnemySync %u: took over moby %d (o_class %d) from player %d", ticks_, state->uid,
-                          state->o_class, sender);
+            Logger::debug("EnemySync %u: took over moby %d/%d (o_class %d) from player %d", ticks_, state->uid,
+                          state->spawn, state->o_class, sender);
 
             EnemyRecord record;
             record.frame = frame;
@@ -861,8 +874,8 @@ static void receive_state(EnemySender* sender_info, u32 frame, MPEnemyState* sta
     }
 
     if (enemy->owner != sender) {
-        Logger::debug("EnemySync %u: moby %d (o_class %d) is run by player %d", ticks_, state->uid, state->o_class,
-                      sender);
+        Logger::debug("EnemySync %u: moby %d/%d (o_class %d) is run by player %d", ticks_, state->uid, state->spawn,
+                      state->o_class, sender);
         enemy->owner = sender;
         enemy->handoff_to = 0;
         memset(enemy->history, 0, sizeof(enemy->history));
@@ -954,17 +967,17 @@ void EnemySync::receive(MPPacketEnemyState* packet, size_t len) {
 }
 
 bool EnemySync::is_owned(Moby* moby) {
-    SyncedEnemy* enemy = find_enemy(LevelMobys::index_of(moby));
+    SyncedEnemy* enemy = find_enemy(sync_index(moby));
     return enemy != nullptr && enemy->owner == OWNER_SELF;
 }
 
 bool EnemySync::is_remote(Moby* moby) {
-    SyncedEnemy* enemy = find_enemy(LevelMobys::index_of(moby));
+    SyncedEnemy* enemy = find_enemy(sync_index(moby));
     return enemy != nullptr && (owner_is_remote(enemy) || enemy->reacting);
 }
 
 void EnemySync::on_animation_started(Moby* moby, u32 blend_frames) {
-    if (moby < LEVEL_MOBYS_START || moby >= LEVEL_MOBYS_END) {
+    if (moby < LEVEL_MOBYS_START || moby >= moby_ptr_end) {
         return;
     }
 
@@ -983,8 +996,33 @@ void EnemySync::on_get_damage(Moby* moby) {
     }
 }
 
+void EnemySync::on_spawned(Moby* moby) {
+    int index = moby - LEVEL_MOBYS_START;
+    if (moby == nullptr || index < 0 || index >= MAX_LEVEL_MOBYS) {
+        return;
+    }
+
+    // A new moby in the slot: forget what we knew about the one before, which died since
+    SyncedEnemy* enemy = find_enemy(index);
+    if (enemy != nullptr) {
+        Client* client = Game::shared().connected_client();
+        if (enemy->owner == OWNER_SELF && client != nullptr) {
+            client->send_ack(Packet::make_moby_killed_packet(enemy->uid, enemy->o_class, enemy->spawn));
+        }
+
+        remove_enemy(enemy);
+    }
+
+    traits_[index] = 0;
+    moving_frames_[index] = 0;
+    restarts_[index] = 0;
+    blend_frames_[index] = 0;
+}
+
 void EnemySync::reset() {
     Logger::debug("EnemySync %u: reset", ticks_);
+
+    SpawnedMobys::reset();
 
     memset(enemies_, 0, sizeof(enemies_));
     memset(senders_, 0, sizeof(senders_));
@@ -1010,4 +1048,11 @@ extern "C" void _c_on_moby_animation_started(Moby* moby, u32 blend_frames) {
 
 extern "C" void _c_on_moby_get_damage(Moby* moby) {
     EnemySync::on_get_damage(moby);
+}
+
+extern "C" void _c_on_moby_spawned(Moby* moby) {
+    // Whose update spawned it, before anything else uses its slot
+    SpawnedMobys::on_spawned(moby, updating_);
+    EnemySync::on_spawned(moby);
+    EffectSync::on_spawned(moby);
 }

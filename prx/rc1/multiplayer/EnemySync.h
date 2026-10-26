@@ -13,7 +13,8 @@
 //  an enemy lets it react to hits on its own, so it flinches, dies and drops its bolts there too. Whatever damage it
 //  does meanwhile is undone, since that enemy is fighting someone in another game.
 //
-// What counts as an enemy: a moby placed in the level that reads the damage done to it and moves on its own.
+// What counts as an enemy: a moby placed in the level, or spawned by one (see SpawnedMobys), that reads the damage
+//  done to it and moves on its own.
 //
 // To do all this, the mod runs the game's moby update loop itself (see `update_mobys`), the same way the game does,
 //  with a look at each moby before and after its update.
@@ -49,6 +50,7 @@ struct EnemySync {
     // From the hooks on the game's functions that start a moby's animation and read the damage done to a moby
     static void on_animation_started(Moby* moby, u32 blend_frames);
     static void on_get_damage(Moby* moby);
+    static void on_spawned(Moby* moby);
 
     // New level or respawn
     static void reset();
