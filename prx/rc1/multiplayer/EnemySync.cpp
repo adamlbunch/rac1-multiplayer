@@ -30,6 +30,7 @@ SHK_FUNCTION_DEFINE_STATIC_1(0xf31a8, int, build_moby_transform, Moby*, moby);
 
 // Mode bits: 0x4 skips building the transform, 0x40 skips the animation step, 0x100 makes the game use the
 //  transform the moby set itself instead of building one from its position, rotation and scale
+#define MODE_HIDDEN 0x2              // The game leaves it out of its update list
 #define MODE_NO_TRANSFORM 0x4
 #define MODE_NO_ANIMATION 0x40
 #define MODE_OWN_TRANSFORM 0x100
@@ -866,6 +867,47 @@ static void after_transform(Moby* moby) {
     send_state(enemy, moby, distance, others_sq);
 }
 
+// The game only runs the mobys near the camera, and those that always run. The enemies another game runs are kept in
+//  step wherever they are: one that wandered off from where it is here, towards our player there, shows up where it
+//  is there instead of staying behind out of sight. Their own update doesn't run here anyway.
+static Moby* add_remote_enemies(Moby* list) {
+    static u8 listed[MAX_LEVEL_MOBYS / 8];
+    memset(listed, 0, sizeof(listed));
+
+    Moby* last = nullptr;
+    for (Moby* moby = list; moby != nullptr; moby = (Moby*)moby->p_chain) {
+        int index = moby - LEVEL_MOBYS_START;
+        if (index >= 0 && index < MAX_LEVEL_MOBYS) {
+            listed[index / 8] |= 1 << (index % 8);
+        }
+        last = moby;
+    }
+
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        SyncedEnemy* enemy = &enemies_[i];
+        if (!enemy->used || !(owner_is_remote(enemy) || enemy->copy) || enemy->index >= MAX_LEVEL_MOBYS ||
+            (listed[enemy->index / 8] & (1 << (enemy->index % 8)))) {
+            continue;
+        }
+
+        Moby* moby = LEVEL_MOBYS_START + enemy->index;
+        if (moby >= moby_ptr_end || moby->state < 0 || (moby->mode_bits & MODE_HIDDEN)) {
+            continue;
+        }
+
+        moby->p_chain = nullptr;
+        if (last == nullptr) {
+            list = moby;
+        } else {
+            last->p_chain = moby;
+        }
+        last = moby;
+        listed[enemy->index / 8] |= 1 << (enemy->index % 8);
+    }
+
+    return list;
+}
+
 bool EnemySync::update_mobys() {
     if (Game::shared().connected_client() == nullptr || (sync_off_ & SYNC_OFF_UPDATE_LOOP)) {
         return false;
@@ -879,7 +921,7 @@ bool EnemySync::update_mobys() {
 
     EffectSync::begin_frame();
 
-    Moby* moby = build_moby_update_list();
+    Moby* moby = add_remote_enemies(build_moby_update_list());
     MOBY_UPDATE_LIST = moby;
 
     for (; moby != nullptr; moby = (Moby*)moby->p_chain) {
