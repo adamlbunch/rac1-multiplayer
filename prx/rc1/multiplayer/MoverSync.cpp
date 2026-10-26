@@ -79,9 +79,14 @@
 #define BIG_BOLT_O_CLASS 14
 
 // Our player's memory: a moby whose variables point here (or at our player's moby) is doing something with our
-//  player, like a bolt flying at them, and only makes sense in this game
+//  player. Where they are and which way they face are known in other games, as our copy of them there.
 #define PLAYER_DATA_START 0x969ce0
 #define PLAYER_DATA_END 0x96d000
+#define PLAYER_POSITION 0x969d60
+#define PLAYER_ROTATION 0x969d70
+
+// Other players' copies run this update (see MPMoby)
+#define MP_MOBY_UPDATE_FUNC ((void*)0x710ed8)
 
 // The level's memory, which the game allocates from the bottom up: start, next free byte, end
 #define LEVEL_HEAP (*(u32**)0xa1091c)
@@ -122,6 +127,7 @@ struct Mover {
 
     // A change of its state another game made, waiting to be made here
     bool pending_transition;
+    u16 transition_sender;
     u8 transition_wait;
     MPEnemyState transition;
     u16 transition_n_words;
@@ -191,14 +197,47 @@ static bool looks_like_pointer(u32 value) {
     return heap != nullptr && value >= heap[0] && value < heap[2] + 0x100000;
 }
 
-// Whether its variables point at our player: what it's doing then is about this game only
+// How other games know an address in its variables that's about our player: our player's moby, where they are or
+//  which way they face. MP_MOVER_WORD_VALUE if it's not about our player.
+static u16 player_reference(u32 value, u32* into) {
+    u32 hero = (u32)ratchet_moby;
+    if (hero != 0 && value >= hero && value < hero + sizeof(Moby)) {
+        *into = value - hero;
+        return MP_MOVER_WORD_SENDER_PLAYER;
+    }
+
+    *into = 0;
+    if (value == PLAYER_POSITION) {
+        return MP_MOVER_WORD_SENDER_POSITION;
+    }
+    if (value == PLAYER_ROTATION) {
+        return MP_MOVER_WORD_SENDER_ROTATION;
+    }
+
+    return MP_MOVER_WORD_VALUE;
+}
+
+// Whether its variables point at something about a player other games can't know: other parts of our player's
+//  memory, or our copy of another player. Then what it's doing only makes sense in this game.
 static bool involves_player(Moby* moby, u16 vars_size) {
     u8* vars = (u8*)moby->vars;
     for (u16 offset = 0; vars != nullptr && offset + 4 <= vars_size; offset += 4) {
-        u32 value;
+        u32 value, into;
         memcpy(&value, vars + offset, 4);
-        if (value == (u32)ratchet_moby || (value >= PLAYER_DATA_START && value < PLAYER_DATA_END)) {
+        if (player_reference(value, &into) != MP_MOVER_WORD_VALUE) {
+            continue;
+        }
+
+        if (value >= PLAYER_DATA_START && value < PLAYER_DATA_END) {
             return true;
+        }
+
+        Moby* start = LEVEL_MOBYS_START;
+        if (start != nullptr && value >= (u32)start && value < (u32)moby_ptr_end) {
+            Moby* other = start + (value - (u32)start) / sizeof(Moby);
+            if (other->p_update == MP_MOBY_UPDATE_FUNC) {
+                return true;
+            }
         }
     }
 
@@ -319,11 +358,23 @@ static bool sent_by_other(Mover* mover, float distance) {
            distance >= mover->sender_distance - TIE_DISTANCE;
 }
 
-// Takes on another game's variables, leaving alone ours that point somewhere in our memory or hold a sound channel
-static void apply_words(Mover* mover, Moby* moby, MPMoverWord* words, u16 n_words) {
+// Takes on another game's variables, leaving alone ours that point somewhere in our memory or hold a sound channel.
+//  Those about the sender's player point at our copy of them. False if we have no copy of them.
+static bool apply_words(Mover* mover, Moby* moby, u16 sender, MPMoverWord* words, u16 n_words) {
     u8* vars = (u8*)moby->vars;
     if (vars == nullptr) {
-        return;
+        return true;
+    }
+
+    Moby* copy = nullptr;
+    for (int i = 0; i < n_words; i++) {
+        if (words[i].kind != MP_MOVER_WORD_VALUE) {
+            copy = Mirror::hero_of(sender);
+            if (copy == nullptr) {
+                return false;
+            }
+            break;
+        }
     }
 
     for (int i = 0; i < n_words; i++) {
@@ -332,12 +383,30 @@ static void apply_words(Mover* mover, Moby* moby, MPMoverWord* words, u16 n_word
             continue;
         }
 
+        u32 value = word->value;
+        if (word->kind != MP_MOVER_WORD_VALUE) {
+            if (word->kind == MP_MOVER_WORD_SENDER_PLAYER && word->value < sizeof(Moby)) {
+                value = (u32)copy + word->value;
+            } else if (word->kind == MP_MOVER_WORD_SENDER_POSITION) {
+                value = (u32)&copy->position;
+            } else if (word->kind == MP_MOVER_WORD_SENDER_ROTATION) {
+                value = (u32)&copy->rotation;
+            } else {
+                continue;
+            }
+
+            memcpy(vars + word->offset, &value, 4);
+            continue;
+        }
+
         u32 ours;
         memcpy(&ours, vars + word->offset, 4);
-        if (ours != word->value && !looks_like_pointer(ours) && !looks_like_pointer(word->value)) {
-            memcpy(vars + word->offset, &word->value, 4);
+        if (ours != value && !looks_like_pointer(ours) && !looks_like_pointer(value)) {
+            memcpy(vars + word->offset, &value, 4);
         }
     }
+
+    return true;
 }
 
 static void apply_place(Moby* moby, MPEnemyState* state) {
@@ -355,7 +424,7 @@ static void apply_place(Moby* moby, MPEnemyState* state) {
 //  in its own a while, or has kept it waiting long enough
 static void apply_transition(Mover* mover, Moby* moby) {
     MPEnemyState* transition = &mover->transition;
-    if ((s8)transition->state == moby->state || involves_player(moby, mover->vars_size)) {
+    if ((s8)transition->state == moby->state) {
         mover->pending_transition = false;
         return;
     }
@@ -367,10 +436,15 @@ static void apply_transition(Mover* mover, Moby* moby) {
     }
 
     mover->pending_transition = false;
+
+    // About the sender's player, who we have no copy of: not made
+    if (!apply_words(mover, moby, mover->transition_sender, mover->transition_words, mover->transition_n_words)) {
+        return;
+    }
+
     moby->state = transition->state;
     apply_place(moby, transition);
     MobyAnimation::apply(moby, &transition->anim, &mover->animation, false);
-    apply_words(mover, moby, mover->transition_words, mover->transition_n_words);
 
     mover->local_state = moby->state;
     mover->state_frames = 0;
@@ -413,7 +487,8 @@ void MoverSync::before_update(Moby* moby, int index) {
 
     mover->pending = false;
 
-    if (involves_player(moby, mover->vars_size)) {
+    // About the sender's player, who we have no copy of: left as it is
+    if (!apply_words(mover, moby, mover->sender, mover->words, mover->n_words)) {
         return;
     }
 
@@ -436,7 +511,6 @@ void MoverSync::before_update(Moby* moby, int index) {
     }
 
     MobyAnimation::apply(moby, &state->anim, &mover->animation, false);
-    apply_words(mover, moby, mover->words, mover->n_words);
 }
 
 // What we send of a mover: what it is, where, its state, its animation, and its variables. Those that changed since
@@ -470,6 +544,19 @@ static void fill_state(Mover* mover, Moby* moby, float distance, OutgoingMover* 
         memcpy(&value, vars + offset, 4);
         memcpy(&baseline, mover->baseline + offset, 4);
 
+        // About our player: always, as our player
+        u32 into;
+        u16 kind = player_reference(value, &into);
+        if (kind != MP_MOVER_WORD_VALUE) {
+            if (n_words < MAX_WORDS) {
+                out->words[n_words].offset = offset;
+                out->words[n_words].kind = kind;
+                out->words[n_words].value = into;
+                n_words += 1;
+            }
+            continue;
+        }
+
         u32 bit = 1u << ((offset / 4) % 32);
         u32* changed = &mover->changed[offset / 4 / 32];
         if (value != baseline && !looks_like_pointer(value)) {
@@ -478,7 +565,7 @@ static void fill_state(Mover* mover, Moby* moby, float distance, OutgoingMover* 
 
         if (((*changed & bit) || (all_words && !looks_like_pointer(value))) && n_words < MAX_WORDS) {
             out->words[n_words].offset = offset;
-            out->words[n_words].pad = 0;
+            out->words[n_words].kind = MP_MOVER_WORD_VALUE;
             out->words[n_words].value = value;
             n_words += 1;
         }
@@ -493,14 +580,14 @@ static void fill_state(Mover* mover, Moby* moby, float distance, OutgoingMover* 
             continue;
         }
 
-        u32 value;
+        u32 value, into;
         memcpy(&value, vars + word * 4, 4);
-        if (looks_like_pointer(value)) {
+        if (looks_like_pointer(value) || player_reference(value, &into) != MP_MOVER_WORD_VALUE) {
             continue;
         }
 
         out->words[n_words].offset = word * 4;
-        out->words[n_words].pad = 0;
+        out->words[n_words].kind = MP_MOVER_WORD_VALUE;
         out->words[n_words].value = value;
         n_words += 1;
     }
@@ -735,6 +822,7 @@ void MoverSync::receive(MPPacketMovers* packet, size_t len) {
         // A change of state it made by itself there: made here too, wherever our player is
         if (head->moby.flags & MP_ENEMY_FLAG_TRANSITION) {
             mover->pending_transition = true;
+            mover->transition_sender = packet->sender;
             mover->transition_wait = 0;
             memcpy(&mover->transition, &head->moby, sizeof(MPEnemyState));
             mover->transition_n_words = head->n_words;

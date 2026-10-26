@@ -651,9 +651,14 @@ typedef struct {
 
 typedef struct {
     u16 offset;           // In its variables
-    u16 pad;
+    u16 kind;             // MP_MOVER_WORD_*
     u32 value;
 } MPMoverWord;
+
+#define MP_MOVER_WORD_VALUE 0             // Just a value
+#define MP_MOVER_WORD_SENDER_PLAYER 1     // The address of the sender's player's moby, `value` bytes into it
+#define MP_MOVER_WORD_SENDER_POSITION 2   // The address of where the sender's player is
+#define MP_MOVER_WORD_SENDER_ROTATION 3   // The address of which way the sender's player faces
 
 #define MP_LEVEL_CONFIG_OPTION_BLOCK_MOBY_UID   1
 #define MP_LEVEL_CONFIG_OPTION_BLOCK_OCLASS     2

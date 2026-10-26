@@ -12,8 +12,10 @@
 // The same goes for things that don't move but change their state while the level runs: doors opening, buttons,
 //  bridges, hazards going off. Those also take on the state of the game whose player is nearest, once they've been
 //  in their own for a moment, unless our player is right next to them (what's going on with them there is up to us).
-//  Only things that are drawn: the level's invisible triggers (cutscenes, the camera...) are never touched, and
-//  neither is anything doing something with our player.
+//  Only things that are drawn: the level's invisible triggers (cutscenes, the camera...) are never touched.
+//
+// Something busy with the sender's player (a critter reacting to them, something following them) holds their
+//  address: other games put in their copy of that player, so it's busy with the same player there.
 //
 // When one of those changes its state by itself (a door opens because a puzzle was solved, a button goes down), the
 //  game it happened in tells the others right away, and they make the same change, wherever the players are: the
