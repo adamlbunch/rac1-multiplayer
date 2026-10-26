@@ -212,6 +212,8 @@ void SoundSync::end_frame() {
     n_outgoing_stops_ = 0;
 }
 
+static void play(u16 sender, MPSoundEvent* event);
+
 void SoundSync::receive(MPPacketSounds* packet, size_t len) {
     if (packet->sender == 0 || game_state != PlayerControl ||
         len < sizeof(MPPacketSounds) + packet->n_sounds * sizeof(MPSoundEvent)) {
@@ -227,6 +229,12 @@ void SoundSync::receive(MPPacketSounds* packet, size_t len) {
 
         if (next >= MAX_QUEUED) {
             return;
+        }
+
+        // What they fired isn't buffered like players and enemies (see SyncedMoby), and may be deleted right after
+        if (events[i].target == MP_SOUND_TARGET_SYNCED && !(events[i].flags & MP_SOUND_FLAG_STOP)) {
+            play(packet->sender, &events[i]);
+            continue;
         }
 
         QueuedSound* queued = &queue_[next];

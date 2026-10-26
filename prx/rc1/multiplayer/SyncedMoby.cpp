@@ -3,6 +3,7 @@
 //
 
 #include "SyncedMoby.h"
+#include "SoundSync.h"
 #include "Player.h"
 #include <rc1/rc1.h>
 #include <rc1/Game.h>
@@ -31,6 +32,9 @@ void SyncedMoby::deactivate() {
     SyncedMobyVars* vars = &synced_moby_vars[id];
 
     if (client != nullptr) {
+        // What it played on its way out first, while other games still have it
+        SoundSync::end_frame();
+
         Logger::debug("Sending delete packet for moby %d", vars->uuid);
         client->send_ack(Packet::make_moby_delete_packet(vars->uuid));
         memset(vars, 0, sizeof(SyncedMobyVars));

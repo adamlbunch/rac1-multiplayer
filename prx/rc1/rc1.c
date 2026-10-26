@@ -478,6 +478,17 @@ s32 play_level_sound2_hook(s32 index, s32 flags, Moby* moby) {
     return handle;
 }
 
+SHK_HOOK(s32, _play_step_sound, s32, s32, s32, s32, Moby*);
+s32 play_step_sound_hook(s32 kind, s32 ground, s32 magneboots, s32 flags, Moby* moby) {
+    if (!_c_should_play_sound(moby)) {
+        return -1;
+    }
+
+    s32 handle = SHK_CALL_HOOK(_play_step_sound, kind, ground, magneboots, flags, moby);
+    _c_on_sound_played(4, kind, flags, moby, (u16)((ground & 0x7fff) | (magneboots ? 0x8000 : 0)), handle);
+    return handle;
+}
+
 SHK_HOOK(void, _stop_sound, s32);
 void stop_sound_hook(s32 handle) {
     _c_on_sound_stopped(handle);
@@ -495,6 +506,8 @@ s32 _c_play_sound(u8 function, s32 index, s32 flags, Moby* moby, u16 sound_class
             return SHK_CALL_HOOK(_play_level_sound, index, flags, moby);
         case 3:
             return SHK_CALL_HOOK(_play_level_sound2, index, flags, moby);
+        case 4:
+            return SHK_CALL_HOOK(_play_step_sound, index, sound_class & 0x7fff, (sound_class >> 15) & 1, flags, moby);
         default:
             return -1;
     }
@@ -555,6 +568,7 @@ void rc1_init() {
     SHK_BIND_HOOK(_play_class_sound, play_class_sound_hook);
     SHK_BIND_HOOK(_play_level_sound, play_level_sound_hook);
     SHK_BIND_HOOK(_play_level_sound2, play_level_sound2_hook);
+    SHK_BIND_HOOK(_play_step_sound, play_step_sound_hook);
     SHK_BIND_HOOK(_stop_sound, stop_sound_hook);
     SHK_BIND_HOOK(metal_detector_spot_update_func, metal_detector_spot_update_func_hook);
     SHK_BIND_HOOK(bink_do_frame, bink_do_frame_hook);

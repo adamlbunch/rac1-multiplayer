@@ -124,6 +124,10 @@ replaced_instr = "stdu r1, -0x80(r1)"
 addr = 0x15d380
 replaced_instr = "stdu r1, -0x80(r1)"
 
+[_play_step_sound]
+addr = 0x15d4dc
+replaced_instr = "stdu r1, -0x80(r1)"
+
 [_stop_sound]
 addr = 0x15cdb0
 replaced_instr = "cmpwi r3, 0x0"

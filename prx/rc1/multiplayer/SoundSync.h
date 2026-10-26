@@ -25,7 +25,8 @@ struct SoundSync {
     static void on_played(u8 function, s32 index, s32 flags, Moby* moby, u16 sound_class, s32 handle);
     static void on_stopped(s32 handle);
 
-    // Sends what was played this frame, once our player has updated
+    // Sends what was played this frame, once our player has updated. Also right before one of our synced mobys goes
+    //  away, so the sounds it made on its way out reach other games while they still have their copy of it.
     static void end_frame();
 
     static void receive(MPPacketSounds* packet, size_t len);

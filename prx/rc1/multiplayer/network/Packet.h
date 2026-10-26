@@ -603,6 +603,8 @@ typedef struct {
 #define MP_SOUND_FUNCTION_CLASS 1
 #define MP_SOUND_FUNCTION_LEVEL 2
 #define MP_SOUND_FUNCTION_LEVEL2 3
+#define MP_SOUND_FUNCTION_STEP 4        // The player's steps and landings: `index` is the kind, `sound_class` the
+                                        //  ground, with the magneboots on in its top bit
 
 // What made it, in the sender's game
 #define MP_SOUND_TARGET_HERO 0          // Their player
