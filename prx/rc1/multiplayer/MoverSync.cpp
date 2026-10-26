@@ -209,10 +209,9 @@ static bool syncable_class(Moby* moby) {
     return moby->o_class != BOLT_O_CLASS && moby->o_class != BIG_BOLT_O_CLASS;
 }
 
-// Drawn, unlike the level's invisible triggers and managers
+// Drawn, unlike the level's invisible triggers and managers, which have no model at all
 static bool drawn(Moby* moby) {
-    MobyClass* model = moby->p_class;
-    return model != nullptr && (model->pakcet_cnt_0 != 0 || model->packet_cnt_1 != 0);
+    return moby->p_class != nullptr;
 }
 
 // How much of the memory at `vars` is the moby's own: up to the next moby's variables
