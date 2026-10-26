@@ -62,6 +62,18 @@ struct RemoteHit {
 
 static HitMoby hit_mobys_[MAX_HIT_MOBYS];
 static PendingKill pending_kills_[MAX_PENDING_KILLS];
+
+// Mobys another player's game recorded as gone for good, which we give a moment to go away on their own here first
+#define MAX_PENDING_REMOVALS 64
+#define REMOVAL_GRACE_TICKS (60 * 5)
+
+struct PendingRemoval {
+    bool used;
+    u16 uid;
+    u32 deadline;
+};
+
+static PendingRemoval pending_removals_[MAX_PENDING_REMOVALS];
 static RemoteHit remote_hits_[MAX_REMOTE_HITS];
 
 static u32 ticks_ = 0;
@@ -305,6 +317,54 @@ static void remove_remote_hit_bolts() {
     }
 }
 
+void WorldSync::on_gone_for_good(int level, int offset, u8 before, u8 after) {
+    u8 added = after & ~before;
+    if (level != current_planet || added == 0) {
+        return;
+    }
+
+    for (int bit = 0; bit < 8; bit++) {
+        if (!(added & (1 << bit))) {
+            continue;
+        }
+
+        // The game keeps it as 32-bit words with a bit per UID
+        u16 uid = (offset / 4) * 32 + (3 - offset % 4) * 8 + bit;
+
+        for (int i = 0; i < MAX_PENDING_REMOVALS; i++) {
+            if (!pending_removals_[i].used) {
+                pending_removals_[i].used = true;
+                pending_removals_[i].uid = uid;
+                pending_removals_[i].deadline = ticks_ + REMOVAL_GRACE_TICKS;
+                break;
+            }
+        }
+    }
+}
+
+static void apply_pending_removals() {
+    for (int i = 0; i < MAX_PENDING_REMOVALS; i++) {
+        PendingRemoval* removal = &pending_removals_[i];
+        if (!removal->used) {
+            continue;
+        }
+
+        Moby* moby = LevelMobys::find(removal->uid);
+        if (moby == nullptr) {
+            removal->used = false;
+            continue;
+        }
+
+        if ((s32)(ticks_ - removal->deadline) >= 0) {
+            Logger::debug("WorldSync: removing moby %d (o_class %d) another player's game recorded as gone for good",
+                          removal->uid, moby->o_class);
+            moby->state = -1;
+            delete_moby(moby);
+            removal->used = false;
+        }
+    }
+}
+
 void WorldSync::on_tick(Client* client) {
     ticks_ += 1;
 
@@ -329,6 +389,7 @@ void WorldSync::on_tick(Client* client) {
 
     check_hit_mobys(client);
     apply_pending_kills();
+    apply_pending_removals();
     remove_remote_hit_bolts();
 }
 
@@ -437,6 +498,7 @@ void WorldSync::reset() {
     memset(hit_mobys_, 0, sizeof(hit_mobys_));
     memset(remote_hits_, 0, sizeof(remote_hits_));
     memset(pending_kills_, 0, sizeof(pending_kills_));
+    memset(pending_removals_, 0, sizeof(pending_removals_));
     injected_ = 0;
     next_record_ = DAMAGE_NEXT_RECORD % DAMAGE_RECORD_COUNT;
 }

@@ -29,6 +29,11 @@ struct WorldSync {
     static void receive_hit(MPPacketMobyHit* hit, size_t len);
     static void receive_killed(MPPacketMobyKilled* killed);
 
+    // The server changed a byte of a level's record of the mobys gone for good, as another player's game did. Mobys
+    //  it adds that are still here on our level are removed: the game only reads that record as the level loads, so
+    //  a gate another player's progress opened would otherwise stay shut until we reload.
+    static void on_gone_for_good(int level, int offset, u8 before, u8 after);
+
     // A damage record that isn't a real hit, so it's not passed on
     static void ignore_record(u32 index);
 

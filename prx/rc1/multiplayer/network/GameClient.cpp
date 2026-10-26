@@ -562,7 +562,9 @@ void GameClient::update_set_state(MPPacketSetState* packet) {
                 }
             }
             if (type == MP_LEVEL_FLAG_TYPE_2) {
+                u8 before = level_flags2[level * 0x100 + offset];
                 level_flags2[level * 0x100 + offset] = packet->value;
+                WorldSync::on_gone_for_good(level, offset, before, (u8)packet->value);
             }
 
             Game::shared().refresh_level_flags();
