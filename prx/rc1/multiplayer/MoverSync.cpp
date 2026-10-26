@@ -128,6 +128,9 @@ struct Mover {
     u32 cycler_until;
     u32 transition_tick;    // When it last changed state by itself here, or from another game's change
 
+    // Whether we said it isn't set up for a state another game put it in (said once)
+    bool told_not_set_up;
+
     // A change of its state another game made, waiting to be made here
     bool pending_transition;
     u16 transition_sender;
@@ -507,8 +510,11 @@ static void apply_transition(Mover* mover, Moby* moby) {
     // Ours isn't set up for it
     if (!set_up_like_sender(mover, moby, mover->transition_pointers, mover->transition_words,
                             mover->transition_n_words)) {
-        Logger::debug("MoverSync: moby %d (o_class %d) isn't set up for state %d here", mover->uid, mover->o_class,
-                      transition->state);
+        if (!mover->told_not_set_up) {
+            mover->told_not_set_up = true;
+            Logger::debug("MoverSync: moby %d (o_class %d) isn't set up for state %d here", mover->uid, mover->o_class,
+                          transition->state);
+        }
         return;
     }
 

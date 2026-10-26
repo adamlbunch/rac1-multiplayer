@@ -135,3 +135,7 @@ replaced_instr = "cmpwi r3, 0x0"
 [_game_heap_alloc]
 addr = 0x4fe098
 replaced_instr = "stdu r1, -0x70(r1)"
+
+[_game_heap_alloc_up]
+addr = 0x4fe52c
+replaced_instr = "stdu r1, -0x70(r1)"

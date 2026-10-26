@@ -508,6 +508,18 @@ void* game_heap_alloc_hook(u32* heap, s32 size, s32 align) {
     return memory;
 }
 
+// The same, always from the bottom of the area up, with no alignment
+SHK_HOOK(void*, _game_heap_alloc_up, u32*, s32);
+void* game_heap_alloc_up_hook(u32* heap, s32 size) {
+    void* memory = SHK_CALL_HOOK(_game_heap_alloc_up, heap, size);
+
+    if (memory == NULL && size > 0 && _c_on_game_heap_full(heap, size, (u32)__builtin_return_address(0))) {
+        memory = SHK_CALL_HOOK(_game_heap_alloc_up, heap, size);
+    }
+
+    return memory;
+}
+
 // Plays a sound another game played, with the same function (MP_SOUND_FUNCTION_*)
 s32 _c_play_sound(u8 function, s32 index, s32 flags, Moby* moby, u16 sound_class) {
     switch (function) {
@@ -530,11 +542,14 @@ void _c_stop_sound(s32 handle) {
     SHK_CALL_HOOK(_stop_sound, handle);
 }
 
-SHK_HOOK(u64, init_gameplay);
-u64 init_gameplay_hook() {
+// Loads the level's gameplay data: into a new buffer when `new_buffer` is set (the level loads), otherwise into the one
+//  it has (a respawn). It has to be passed on: the call before it leaves something else in its register, and every
+//  respawn took a new buffer of a megabyte or more from the game's memory, until a level had none left and froze.
+SHK_HOOK(u64, init_gameplay, s32);
+u64 init_gameplay_hook(s32 new_buffer) {
     _c_before_init_gameplay();
 
-    u64 ret = SHK_CALL_HOOK(init_gameplay);
+    u64 ret = SHK_CALL_HOOK(init_gameplay, new_buffer);
 
     _c_after_init_gameplay();
 
@@ -584,6 +599,7 @@ void rc1_init() {
     SHK_BIND_HOOK(_play_step_sound, play_step_sound_hook);
     SHK_BIND_HOOK(_stop_sound, stop_sound_hook);
     SHK_BIND_HOOK(_game_heap_alloc, game_heap_alloc_hook);
+    SHK_BIND_HOOK(_game_heap_alloc_up, game_heap_alloc_up_hook);
     SHK_BIND_HOOK(metal_detector_spot_update_func, metal_detector_spot_update_func_hook);
     SHK_BIND_HOOK(bink_do_frame, bink_do_frame_hook);
     SHK_BIND_HOOK(perform_save_action, perform_save_action_hook);
