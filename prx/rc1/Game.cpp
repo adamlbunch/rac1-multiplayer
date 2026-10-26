@@ -533,7 +533,7 @@ void Game::save(void* savedata) {
 }
 
 void Game::load() {
-    void* data = (void*)0x1000000;
+    void* data = DataClient::save_file();
 
     Logger::info("Loading savefile...");
     load_savefile(0, data);

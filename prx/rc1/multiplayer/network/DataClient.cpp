@@ -10,6 +10,7 @@
 
 bool DataClient::stop = false;
 DataClient* DataClient::data_client_ = nullptr;
+u8 DataClient::save_file_[0xB0000] __attribute__((aligned(128)));
 
 ssize_t send_all(int sockfd, const void *buf, size_t len) {
     const u8 *p = (const u8 *)buf;
@@ -83,7 +84,12 @@ void DataClient::run() {
 
                     switch (file_upload.file_type) {
                         case MPFileTypeSavefile: {
-                            target_buffer = (void*)0x1000000;
+                            if (target_size > sizeof(save_file_)) {
+                                Logger::error("Server sent a save file of %d bytes, more than a save holds", target_size);
+                                return;
+                            }
+
+                            target_buffer = save_file_;
                             break;
                         }
                         default: {

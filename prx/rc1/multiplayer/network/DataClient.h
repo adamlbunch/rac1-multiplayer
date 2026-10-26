@@ -53,8 +53,17 @@ public:
 
     static void transmit(MPFileType file_type, void* data, size_t len);
 
+    // The last save file the server sent us. It's in memory of our own: it used to be written to 0x1000000, which is
+    //  the game's memory and in use on some levels (Hoven's floor tiles keep their ripples there), so a save arriving
+    //  while playing there crashed the game.
+    static void* save_file() {
+        return save_file_;
+    }
+
     static bool stop;
 private:
+    static u8 save_file_[0xB0000];
+
     int sockfd_;
     u32 key_;
 
