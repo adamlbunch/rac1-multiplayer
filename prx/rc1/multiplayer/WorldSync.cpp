@@ -241,7 +241,7 @@ static void apply_pending_kills() {
             continue;
         }
 
-        if ((s32)(ticks_ - kill->deadline) >= 0) {
+        if ((s32)(ticks_ - kill->deadline) >= 0 || EnemySync::is_copy(moby)) {
             Logger::debug("WorldSync: removing moby %d/%d (o_class %d) another player destroyed", kill->key.uid,
                           kill->key.spawn, kill->key.o_class);
             moby->state = -1;

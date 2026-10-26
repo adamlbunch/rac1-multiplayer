@@ -8,7 +8,9 @@
 
 #include <rc1/Game.h>
 
+#include "AttackerUpdates.h"
 #include "EffectSync.h"
+#include "GadgetModels.h"
 #include "LevelMobys.h"
 #include "SpawnedMobys.h"
 #include "Mirror.h"
@@ -72,13 +74,20 @@ typedef void (*MobyUpdateFunction)(Moby*);
 #define OWNER_NONE 0
 #define OWNER_SELF 0xffff
 
-// What we've seen the level's mobys do in their own update
+// What we've seen the level's mobys do in their own update, and whether their update can hurt anything (which tells
+//  enemies from things like platforms and ships flying by, which other parts of the game can depend on running)
 #define TRAIT_DAMAGEABLE 0x1
 #define TRAIT_MOVES 0x2
-#define TRAITS_ENEMY (TRAIT_DAMAGEABLE | TRAIT_MOVES)
+#define TRAIT_ATTACKER 0x4
+#define TRAIT_ATTACKER_CHECKED 0x8
+#define TRAITS_ENEMY (TRAIT_DAMAGEABLE | TRAIT_MOVES | TRAIT_ATTACKER)
 
 // Frames a moby has to move in before it counts as moving on its own. Crates settle for a few after the level loads.
 #define MOVING_FRAMES 30
+
+// Bolts that fly out of destroyed enemies, which are always each game's own
+#define BOLT_O_CLASS 13
+#define BIG_BOLT_O_CLASS 14
 
 struct EnemyRecord {
     u32 frame;  // 0 for none
@@ -119,6 +128,11 @@ struct SyncedEnemy {
 
     // The state we last put it in, to step its animation on from there between states
     u32 shown_frame;
+
+    // Spawned by an enemy the game that runs it runs: it stays with that game until it's gone. When we made a copy of
+    //  it ourselves (we didn't spawn one), the copy never runs and goes when that game stops sending it.
+    bool spawned;
+    bool copy;
 };
 
 struct EnemySender {
@@ -485,6 +499,9 @@ static void send_state(SyncedEnemy* enemy, Moby* moby, float distance, float oth
     }
 
     capture_state(enemy, moby, distance, &outgoing_states_[n_outgoing_], &outgoing_matrices_[n_outgoing_]);
+    if (enemy->spawned) {
+        outgoing_states_[n_outgoing_].flags |= MP_ENEMY_FLAG_SPAWNED;
+    }
     n_outgoing_ += 1;
 }
 
@@ -543,6 +560,27 @@ static void send_states() {
     n_outgoing_ = 0;
 }
 
+static bool can_attack(Moby* moby) {
+    u32 update = (u32)moby->p_update;
+    int low = 0;
+    int high = sizeof(attacker_updates) / sizeof(attacker_updates[0]) - 1;
+
+    while (low <= high) {
+        int middle = (low + high) / 2;
+        if (attacker_updates[middle] == update) {
+            return true;
+        }
+
+        if (attacker_updates[middle] < update) {
+            low = middle + 1;
+        } else {
+            high = middle - 1;
+        }
+    }
+
+    return false;
+}
+
 // Position in our moby table of a moby other games know too (placed in the level or spawned by one that is, see
 //  SpawnedMobys), or -1
 static int sync_index(Moby* moby) {
@@ -576,6 +614,13 @@ static bool before_update(Moby* moby) {
     rotation_before_ = moby->rotation;
 
     SyncedEnemy* enemy = find_enemy(updating_index_);
+
+    // A copy of what another game's enemy spawned: never runs here
+    if (enemy != nullptr && enemy->copy) {
+        updating_enemy_ = enemy;
+        return false;
+    }
+
     if (enemy == nullptr || !(owner_is_remote(enemy) || enemy->reacting) || (sync_off_ & SYNC_OFF_REMOTE_ENEMIES)) {
         return true;
     }
@@ -682,6 +727,30 @@ static void after_transform(Moby* moby) {
 
     // Reacting to a hit on its own while another game runs it
     if (enemy != nullptr && enemy->reacting) {
+        return;
+    }
+
+    if (!(traits_[index] & TRAIT_ATTACKER_CHECKED)) {
+        traits_[index] |= TRAIT_ATTACKER_CHECKED | (can_attack(moby) ? TRAIT_ATTACKER : 0);
+    }
+
+    // What an enemy we run spawns (a shot, debris...) is drawn from ours in other games until it's gone
+    if (enemy == nullptr && moby->o_class != BOLT_O_CLASS && moby->o_class != BIG_BOLT_O_CLASS) {
+        Moby* spawner = SpawnedMobys::spawner_of(moby);
+        SyncedEnemy* spawner_enemy = spawner != nullptr ? find_enemy(sync_index(spawner)) : nullptr;
+        if (spawner_enemy != nullptr && spawner_enemy->owner == OWNER_SELF) {
+            enemy = add_enemy(index, moby);
+            if (enemy != nullptr) {
+                enemy->owner = OWNER_SELF;
+                enemy->spawned = true;
+            }
+        }
+    }
+
+    if (enemy != nullptr && enemy->spawned) {
+        if (enemy->owner == OWNER_SELF && Mirror::nearest_player_distance_sq(&moby->position) < 1e29f) {
+            send_state(enemy, moby, player_distance(moby), Mirror::nearest_player_distance_sq(&moby->position));
+        }
         return;
     }
 
@@ -901,17 +970,54 @@ void EnemySync::on_tick(Client* client) {
             continue;
         }
 
-        // Whoever ran it stopped sending it, so it's back to running on its own until someone takes it
+        // Whoever ran it stopped sending it, so it's back to running on its own until someone takes it. A copy we made
+        //  goes with it.
         if (enemy->owner != OWNER_SELF && !owner_is_remote(enemy) && !enemy->reacting) {
+            if (enemy->copy) {
+                moby->state = -1;
+                delete_moby(moby);
+            }
             remove_enemy(enemy);
         }
     }
+}
+
+// A copy of a moby another game's enemy spawned, which our copy of that enemy didn't spawn (it doesn't run here)
+static Moby* make_copy(MPEnemyState* state) {
+    if (state->spawn == 0 || GadgetModels::loaded_class(state->o_class) == nullptr) {
+        return nullptr;
+    }
+
+    Moby* moby = spawn_moby(state->o_class);
+    if (moby == nullptr) {
+        return nullptr;
+    }
+
+    EnemySync::on_spawned(moby);
+    SpawnedMobys::adopt(moby, state->uid, state->spawn);
+
+    moby->position.x = state->position[0];
+    moby->position.y = state->position[1];
+    moby->position.z = state->position[2];
+    moby->rotation.x = state->rotation[0];
+    moby->rotation.y = state->rotation[1];
+    moby->rotation.z = state->rotation[2];
+    moby->scale = state->scale;
+    moby->collision = nullptr;
+
+    return moby;
 }
 
 static void receive_state(EnemySender* sender_info, u32 frame, MPEnemyState* state, MPEnemyMatrix* matrix) {
     u16 sender = sender_info->uuid;
 
     Moby* moby = SpawnedMobys::find(state->uid, state->spawn, state->o_class);
+    bool copy = false;
+    if (moby == nullptr && (state->flags & MP_ENEMY_FLAG_SPAWNED) && !(state->flags & MP_ENEMY_FLAG_CLAIM)) {
+        moby = make_copy(state);
+        copy = moby != nullptr;
+    }
+
     int index = sync_index(moby);
     if (moby == nullptr || index < 0) {
         return;
@@ -921,7 +1027,7 @@ static void receive_state(EnemySender* sender_info, u32 frame, MPEnemyState* sta
 
     if (state->flags & MP_ENEMY_FLAG_CLAIM) {
         // Another game asks for an enemy we run
-        if (enemy != nullptr && enemy->owner == OWNER_SELF &&
+        if (enemy != nullptr && enemy->owner == OWNER_SELF && !enemy->spawned &&
             nearer(state->distance, sender_info->rank, player_distance(moby), rank_)) {
             enemy->handoff_to = sender;
             enemy->handoff_distance = state->distance;
@@ -977,8 +1083,16 @@ static void receive_state(EnemySender* sender_info, u32 frame, MPEnemyState* sta
     if (enemy == nullptr) {
         enemy = add_enemy(index, moby);
         if (enemy == nullptr) {
+            if (copy) {
+                delete_moby(moby);
+            }
             return;
         }
+    }
+
+    if (state->flags & MP_ENEMY_FLAG_SPAWNED) {
+        enemy->spawned = true;
+        enemy->copy = enemy->copy || copy;
     }
 
     if (enemy->owner != sender) {
@@ -1078,6 +1192,11 @@ void EnemySync::receive(MPPacketEnemyState* packet, size_t len) {
 bool EnemySync::is_owned(Moby* moby) {
     SyncedEnemy* enemy = find_enemy(sync_index(moby));
     return enemy != nullptr && enemy->owner == OWNER_SELF;
+}
+
+bool EnemySync::is_copy(Moby* moby) {
+    SyncedEnemy* enemy = find_enemy(sync_index(moby));
+    return enemy != nullptr && enemy->copy;
 }
 
 bool EnemySync::is_remote(Moby* moby) {

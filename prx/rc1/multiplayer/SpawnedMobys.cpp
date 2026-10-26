@@ -16,6 +16,7 @@ struct SpawnedMoby {
     u16 o_class;
     u16 spawner_uid;
     u16 spawn;      // How many the spawner had spawned before, plus one
+    Moby* spawner;
 };
 
 static SpawnedMoby spawned_[MAX_SPAWNED];
@@ -73,7 +74,65 @@ void SpawnedMobys::on_spawned(Moby* moby, Moby* spawner) {
     spawned->o_class = moby->o_class;
     spawned->spawner_uid = spawner->uid;
     spawned->spawn = spawn_counts_[spawner_index];
+    spawned->spawner = spawner;
     entries_[index] = slot + 1;
+}
+
+Moby* SpawnedMobys::spawner_of(Moby* moby) {
+    int index = table_index(moby);
+    if (index < 0 || entries_[index] == 0) {
+        return nullptr;
+    }
+
+    SpawnedMoby* spawned = &spawned_[entries_[index] - 1];
+    Moby* spawner = spawned->spawner;
+    if (spawned->moby != moby || spawner == nullptr || spawner->state < 0 || spawner->uid != spawned->spawner_uid) {
+        return nullptr;
+    }
+
+    return spawner;
+}
+
+void SpawnedMobys::adopt(Moby* moby, u16 spawner_uid, u16 spawn) {
+    int index = table_index(moby);
+    if (index < 0) {
+        return;
+    }
+
+    if (entries_[index] != 0) {
+        spawned_[entries_[index] - 1].moby = nullptr;
+        entries_[index] = 0;
+    }
+
+    for (int i = 0; i < MAX_SPAWNED; i++) {
+        SpawnedMoby* spawned = &spawned_[i];
+        if (spawned->moby == nullptr || spawned->moby->state < 0 || spawned->moby->o_class != (short)spawned->o_class) {
+            spawned->moby = moby;
+            spawned->o_class = moby->o_class;
+            spawned->spawner_uid = spawner_uid;
+            spawned->spawn = spawn;
+            spawned->spawner = nullptr;
+            entries_[index] = i + 1;
+            break;
+        }
+    }
+
+    // Find the spawner by UID: its own spawns count on from here
+    for (Moby* spawner = LEVEL_MOBYS_START; spawner < LEVEL_MOBYS_END; spawner++) {
+        if (spawner->uid == spawner_uid) {
+            int spawner_index = table_index(spawner);
+            if (spawner_index >= 0 && spawn_counts_[spawner_index] < spawn) {
+                spawn_counts_[spawner_index] = spawn;
+            }
+
+            for (int i = 0; i < MAX_SPAWNED; i++) {
+                if (entries_[index] == i + 1) {
+                    spawned_[i].spawner = spawner;
+                }
+            }
+            break;
+        }
+    }
 }
 
 bool SpawnedMobys::identify(Moby* moby, u16* uid, u16* spawn) {

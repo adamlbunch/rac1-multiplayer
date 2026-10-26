@@ -23,6 +23,13 @@ struct SpawnedMobys {
     // The live moby other games know by `uid` and `spawn`, of that class
     static Moby* find(u16 uid, u16 spawn, u16 o_class);
 
+    // The level's moby that spawned this one, if it's still there
+    static Moby* spawner_of(Moby* moby);
+
+    // A moby we spawned ourselves as a copy of one another game's spawner spawned: it's known by the same key, and the
+    //  spawner here counts on from it, so what it spawns itself next gets the same key as in the other game
+    static void adopt(Moby* moby, u16 spawner_uid, u16 spawn);
+
     // New level or respawn
     static void reset();
 };

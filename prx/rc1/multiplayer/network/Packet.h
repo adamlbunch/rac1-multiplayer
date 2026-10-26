@@ -555,6 +555,7 @@ typedef struct {
 #define MP_ENEMY_FLAG_MATRIX  0x1   // The moby sets its own transform rather than have the game build it
 #define MP_ENEMY_FLAG_CLAIM   0x2   // Not a state: the sender's player is nearer and asks to run the enemy instead
 #define MP_ENEMY_FLAG_HANDOFF 0x4   // The last state of the enemy in the sender's game, which hands it to the claimant
+#define MP_ENEMY_FLAG_SPAWNED 0x8   // Spawned by an enemy the sender runs (a shot, debris): games without it make a copy
 
 typedef struct {
     u16 uid;

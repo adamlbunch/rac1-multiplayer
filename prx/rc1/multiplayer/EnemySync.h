@@ -14,7 +14,7 @@
 //  does meanwhile is undone, since that enemy is fighting someone in another game.
 //
 // What counts as an enemy: a moby placed in the level, or spawned by one (see SpawnedMobys), that reads the damage
-//  done to it and moves on its own.
+//  done to it, moves on its own and has an update that can hurt something (see AttackerUpdates.h).
 //
 // To do all this, the mod runs the game's moby update loop itself (see `update_mobys`), the same way the game does,
 //  with a look at each moby before and after its update.
@@ -57,6 +57,9 @@ struct EnemySync {
 
     // Whether this moby is drawn from another game's states, or reacting to a hit in its own way meanwhile
     static bool is_remote(Moby* moby);
+
+    // Whether this is a copy we made of something another game's enemy spawned
+    static bool is_copy(Moby* moby);
 
     // From the hooks on the game's functions that start a moby's animation and read the damage done to a moby
     static void on_animation_started(Moby* moby, u32 blend_frames);
