@@ -650,7 +650,7 @@ typedef struct {
     MPEnemyState moby;    // What it is, its state, where it is and its animation (spawn is always 0)
     u16 n_words;          // How many of its variables follow: the ones that aren't what the level started them at
     u16 pad;
-    u32 pointers[MP_MOVER_POINTER_MASKS];  // Which of its variables hold an address in the sender's game
+    u32 pointers[MP_MOVER_POINTER_MASKS];  // Which of its variables hold an address in the sender's level
 } MPMoverState;
 
 typedef struct {

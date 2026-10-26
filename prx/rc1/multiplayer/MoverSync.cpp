@@ -91,8 +91,11 @@
 // Other players' copies run this update (see MPMoby)
 #define MP_MOBY_UPDATE_FUNC ((void*)0x710ed8)
 
-// The level's memory, which the game allocates from the bottom up: start, next free byte, end
+// The level's memory, which the game allocates from the bottom up: start, next free byte, end. And the game's main
+//  memory it's in, with the level's gameplay data the game loads at the top.
 #define LEVEL_HEAP (*(u32**)0xa1091c)
+#define MAIN_HEAP (*(u32**)0xa15f4c)
+#define GAMEPLAY_DATA (*(u32*)0xa108f4)
 
 struct Mover {
     bool used;
@@ -209,14 +212,23 @@ static float square_root(float x) {
     return root;
 }
 
-// A value that's an address in this game's memory: it means the same in every game, but its value is different
-static bool looks_like_pointer(u32 value) {
-    if (value >= 0x10000 && value < 0x1800000) {
+// A value that's an address in the level's memory, or in its gameplay data the game loads at the top of its main
+//  memory, which each game sets up for itself as it goes
+static bool points_into_level(u32 value) {
+    u32* heap = LEVEL_HEAP;
+    if (heap != nullptr && value >= heap[0] && value < heap[2] + 0x100000) {
         return true;
     }
 
-    u32* heap = LEVEL_HEAP;
-    return heap != nullptr && value >= heap[0] && value < heap[2] + 0x100000;
+    u32* main_heap = MAIN_HEAP;
+    u32 gameplay = GAMEPLAY_DATA;
+    return gameplay != 0 && main_heap != nullptr && value >= gameplay && value < main_heap[1];
+}
+
+// A value that's an address in this game's memory: it may mean the same in every game, but its value is different.
+//  Below the game's data there's only its code, the same in every game, so values there are just numbers (flags).
+static bool looks_like_pointer(u32 value) {
+    return (value >= 0x700000 && value < 0x1800000) || points_into_level(value);
 }
 
 // How other games know an address in its variables that's about our player: our player's moby, where they are or
@@ -447,10 +459,10 @@ static bool apply_words(Mover* mover, Moby* moby, u16 sender, MPMoverWord* words
     return true;
 }
 
-// Whether its variables hold an address wherever the sender's do. Its own code sets those up as it goes through its
-//  states, so if ours never went through the ones before (it was out of our player's reach), its code in the state
-//  the sender is in would follow an address that isn't there. Those about the sender's player count as there: they
-//  come with the state.
+// Whether its variables hold an address in the level's memory wherever the sender's do. Its own code sets those up as
+//  it goes through its states, so if ours never went through the ones before (it was out of our player's reach), its
+//  code in the state the sender is in would follow an address that isn't there. Those about the sender's player count
+//  as there: they come with the state.
 static bool set_up_like_sender(Mover* mover, Moby* moby, const u32* pointers, MPMoverWord* words, u16 n_words) {
     u8* vars = (u8*)moby->vars;
     for (u16 offset = 0; offset + 4 <= mover->vars_size; offset += 4) {
@@ -463,7 +475,7 @@ static bool set_up_like_sender(Mover* mover, Moby* moby, const u32* pointers, MP
         if (vars != nullptr) {
             memcpy(&ours, vars + offset, 4);
         }
-        if (looks_like_pointer(ours)) {
+        if (points_into_level(ours)) {
             continue;
         }
 
@@ -632,7 +644,7 @@ static void fill_state(Mover* mover, Moby* moby, float distance, OutgoingMover* 
         memcpy(&value, vars + offset, 4);
         memcpy(&baseline, mover->baseline + offset, 4);
 
-        if (looks_like_pointer(value)) {
+        if (points_into_level(value)) {
             out->head.pointers[offset / 4 / 32] |= 1u << ((offset / 4) % 32);
         }
 
