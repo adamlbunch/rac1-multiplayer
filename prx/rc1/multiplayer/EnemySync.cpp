@@ -81,10 +81,14 @@ typedef void (*MobyUpdateFunction)(Moby*);
 #define TRAIT_MOVES 0x2
 #define TRAIT_ATTACKER 0x4
 #define TRAIT_ATTACKER_CHECKED 0x8
+#define TRAIT_STATE_CHANGES 0x10    // Its state changes while the level runs, not just as it sets itself up
 #define TRAITS_ENEMY (TRAIT_DAMAGEABLE | TRAIT_MOVES | TRAIT_ATTACKER)
 
 // Frames a moby has to move in before it counts as moving on its own. Crates settle for a few after the level loads.
 #define MOVING_FRAMES 30
+
+// Updates after which a moby that changes its state does that while the level runs, not as it sets itself up
+#define SETTLED_UPDATES 60
 
 // Bolts that fly out of destroyed enemies, which are always each game's own
 #define BOLT_O_CLASS 13
@@ -154,6 +158,7 @@ static u8 traits_[MAX_LEVEL_MOBYS];
 static u8 restarts_[MAX_LEVEL_MOBYS];
 static u8 blend_frames_[MAX_LEVEL_MOBYS];
 static u8 moving_frames_[MAX_LEVEL_MOBYS];
+static u8 updates_[MAX_LEVEL_MOBYS];        // How many times it ran, up to SETTLED_UPDATES
 
 static u32 ticks_ = 0;
 static u32 frame_ = 0;
@@ -164,6 +169,7 @@ static Moby* updating_ = nullptr;
 static int updating_index_ = -1;
 static SyncedEnemy* updating_enemy_ = nullptr;
 static Vec4 position_before_;
+static s8 state_before_;
 static Vec4 rotation_before_;
 static u32 damage_next_before_ = 0;
 
@@ -612,6 +618,7 @@ static bool before_update(Moby* moby) {
     }
 
     position_before_ = moby->position;
+    state_before_ = moby->state;
     rotation_before_ = moby->rotation;
 
     SyncedEnemy* enemy = find_enemy(updating_index_);
@@ -675,6 +682,13 @@ static void after_update(Moby* moby) {
             } else {
                 traits_[updating_index_] |= TRAIT_MOVES;
             }
+        }
+
+        // And which change their state while the level runs: doors, buttons, bridges, hazards going off...
+        if (updates_[updating_index_] < SETTLED_UPDATES) {
+            updates_[updating_index_] += 1;
+        } else if (moby->state != state_before_ && moby->state >= 0 && state_before_ >= 0) {
+            traits_[updating_index_] |= TRAIT_STATE_CHANGES;
         }
 
         return;
@@ -764,8 +778,9 @@ static void after_transform(Moby* moby) {
 
     if (enemy == nullptr && (traits_[index] & TRAITS_ENEMY) != TRAITS_ENEMY) {
         // Things that move on their own but aren't enemies: in step with the game whose player is nearest
-        if ((traits_[index] & TRAIT_MOVES) && !(sync_off_ & SYNC_OFF_MOVERS)) {
-            MoverSync::after_update(moby, index, player_distance(moby));
+        if ((traits_[index] & (TRAIT_MOVES | TRAIT_STATE_CHANGES)) && !(sync_off_ & SYNC_OFF_MOVERS)) {
+            MoverSync::after_update(moby, index, player_distance(moby), (traits_[index] & TRAIT_MOVES) != 0,
+                                    (traits_[index] & TRAIT_STATE_CHANGES) != 0);
         }
         return;
     }
@@ -1271,6 +1286,7 @@ void EnemySync::on_spawned(Moby* moby) {
 
     traits_[index] = 0;
     moving_frames_[index] = 0;
+    updates_[index] = 0;
     restarts_[index] = 0;
     blend_frames_[index] = 0;
 }
@@ -1287,6 +1303,7 @@ void EnemySync::reset() {
     memset(restarts_, 0, sizeof(restarts_));
     memset(blend_frames_, 0, sizeof(blend_frames_));
     memset(moving_frames_, 0, sizeof(moving_frames_));
+    memset(updates_, 0, sizeof(updates_));
 
     updating_ = nullptr;
     updating_index_ = -1;

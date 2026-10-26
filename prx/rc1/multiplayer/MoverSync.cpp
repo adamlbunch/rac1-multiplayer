@@ -13,7 +13,7 @@
 #include "SpawnedMobys.h"
 #include "network/GameClient.h"
 
-#define MAX_MOVERS 160
+#define MAX_MOVERS 250
 #define MAX_LEVEL_MOBYS 4096
 #define MAX_SENDERS 4
 
@@ -46,6 +46,14 @@
 //  changed before that get there too
 #define ROTATING_WORDS 8
 
+// Things that change their state take on another game's once they've been in their own this many frames, and not
+//  while our player is this near
+#define STABLE_FRAMES 30
+#define INTERACT_RADIUS 8.0f
+
+// Things that change their state send it right away when it changes, and every so often otherwise
+#define STATE_SEND_INTERVAL 60
+
 // Bolts are each player's own
 #define BOLT_O_CLASS 13
 #define BIG_BOLT_O_CLASS 14
@@ -77,6 +85,11 @@ struct Mover {
     // Frames it ran here, up to SETTLE_FRAMES, and which of its variables we send in turn next
     u8 settled;
     u16 next_word;
+
+    // The state we last sent, and how long it's been in its state here
+    s16 sent_state;
+    s8 local_state;
+    u8 state_frames;
 
     // A state of it from that game, to put it in at that game's frame we show
     bool pending;
@@ -157,6 +170,12 @@ static bool syncable_class(Moby* moby) {
     return moby->o_class != BOLT_O_CLASS && moby->o_class != BIG_BOLT_O_CLASS;
 }
 
+// Drawn, unlike the level's invisible triggers and managers
+static bool drawn(Moby* moby) {
+    MobyClass* model = moby->p_class;
+    return model != nullptr && (model->pakcet_cnt_0 != 0 || model->packet_cnt_1 != 0);
+}
+
 // How much of the memory at `vars` is the moby's own: up to the next moby's variables
 static u16 vars_size_of(Moby* moby) {
     u32 vars = (u32)moby->vars;
@@ -205,6 +224,8 @@ static Mover* add_mover(int index, Moby* moby, u16 uid) {
         mover->uid = uid;
         mover->o_class = moby->o_class;
         mover->vars_size = vars_size_of(moby);
+        mover->sent_state = -1;
+        mover->local_state = moby->state;
         if (mover->vars_size > 0) {
             memcpy(mover->baseline, moby->vars, mover->vars_size);
         }
@@ -255,6 +276,13 @@ void MoverSync::before_update(Moby* moby, int index) {
         return;
     }
 
+    if (moby->state != mover->local_state) {
+        mover->local_state = moby->state;
+        mover->state_frames = 0;
+    } else if (mover->state_frames < 255) {
+        mover->state_frames += 1;
+    }
+
     if (!mover->pending) {
         return;
     }
@@ -283,6 +311,18 @@ void MoverSync::before_update(Moby* moby, int index) {
     moby->scale = state->scale;
     moby->alpha = state->alpha;
 
+    if ((state->flags & MP_ENEMY_FLAG_STATE) && state->state != 0 && state->state < 0x80 &&
+        state->state != (u8)moby->state && mover->state_frames >= STABLE_FRAMES && ratchet_moby != nullptr && drawn(moby)) {
+        float dx = ratchet_moby->position.x - moby->position.x;
+        float dy = ratchet_moby->position.y - moby->position.y;
+        float dz = ratchet_moby->position.z - moby->position.z;
+        if (dx * dx + dy * dy + dz * dz > INTERACT_RADIUS * INTERACT_RADIUS) {
+            moby->state = state->state;
+            mover->local_state = moby->state;
+            mover->state_frames = 0;
+        }
+    }
+
     MobyAnimation::apply(moby, &state->anim, &mover->animation, false);
 
     u8* vars = (u8*)moby->vars;
@@ -304,7 +344,7 @@ void MoverSync::before_update(Moby* moby, int index) {
     }
 }
 
-static void queue_state(Mover* mover, Moby* moby, float distance) {
+static void queue_state(Mover* mover, Moby* moby, float distance, bool changes_state) {
     if (n_outgoing_ >= MAX_OUTGOING) {
         return;
     }
@@ -324,7 +364,11 @@ static void queue_state(Mover* mover, Moby* moby, float distance) {
     state->rotation[1] = moby->rotation.y;
     state->rotation[2] = moby->rotation.z;
     state->scale = moby->scale;
+    if (changes_state && drawn(moby)) {
+        state->flags |= MP_ENEMY_FLAG_STATE;
+    }
     MobyAnimation::capture(moby, &state->anim);
+    mover->sent_state = moby->state;
 
     // The variables that changed since we first saw it, and keep changing: where along its path it is, its timers...
     u16 n_words = 0;
@@ -374,9 +418,14 @@ static void queue_state(Mover* mover, Moby* moby, float distance) {
     n_outgoing_ += 1;
 }
 
-void MoverSync::after_update(Moby* moby, int index, float distance) {
+void MoverSync::after_update(Moby* moby, int index, float distance, bool moves, bool changes_state) {
     u16 uid, spawn;
     if (moby->state < 0 || !syncable_class(moby) || !SpawnedMobys::identify(moby, &uid, &spawn) || spawn != 0) {
+        return;
+    }
+
+    // Invisible things that only change their state are the level's triggers and managers: never touched
+    if (!moves && !drawn(moby)) {
         return;
     }
 
@@ -404,8 +453,10 @@ void MoverSync::after_update(Moby* moby, int index, float distance) {
 
     u32 frame = EnemySync::frame();
     int interval = others_sq < NEAR_RADIUS * NEAR_RADIUS ? SEND_INTERVAL_NEAR : SEND_INTERVAL_FAR;
-    if ((frame + index) % interval == 0 && !involves_player(moby, mover->vars_size)) {
-        queue_state(mover, moby, distance);
+    bool due = (frame + index) % interval == 0 ||
+               (changes_state && (moby->state != mover->sent_state || (frame + index) % STATE_SEND_INTERVAL == 0));
+    if (due && !involves_player(moby, mover->vars_size)) {
+        queue_state(mover, moby, distance, changes_state);
     }
 }
 

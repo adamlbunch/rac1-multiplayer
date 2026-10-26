@@ -9,6 +9,11 @@
 //  game, so it carries on from exactly there. Their own variables that point somewhere in their memory are left
 //  alone: those differ from game to game.
 //
+// The same goes for things that don't move but change their state while the level runs: doors opening, buttons,
+//  bridges, hazards going off. Those also take on the state of the game whose player is nearest, once they've been
+//  in their own for a moment, unless our player is right next to them (what's going on with them there is up to us).
+//  Only things that are drawn: the level's invisible triggers (cutscenes, the camera...) are never touched, and
+//  neither is anything doing something with our player.
 
 #ifndef RAC1_MULTIPLAYER_MOVERSYNC_H
 #define RAC1_MULTIPLAYER_MOVERSYNC_H
@@ -20,10 +25,10 @@
 #include "network/Packet.h"
 
 struct MoverSync {
-    // From our moby update loop (see EnemySync), for the level's mobys that move on their own and aren't enemies:
-    //  before its update, and after it with how far our player is from it
+    // From our moby update loop (see EnemySync), for the level's mobys that move on their own or change their state,
+    //  and aren't enemies: before its update, and after it with how far our player is from it
     static void before_update(Moby* moby, int index);
-    static void after_update(Moby* moby, int index, float distance);
+    static void after_update(Moby* moby, int index, float distance, bool moves, bool changes_state);
 
     // Sends what was queued this frame, after the loop
     static void send(u32 frame);
