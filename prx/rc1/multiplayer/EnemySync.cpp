@@ -361,18 +361,42 @@ static void apply_state(SyncedEnemy* enemy, Moby* moby) {
 
     // Enemies far from everyone come a few frames apart: move them along to the next state
     EnemySender* sender = find_sender(enemy->owner);
-    EnemyRecord* next = sender != nullptr ? record_after(enemy, record->frame) : nullptr;
-    if (next == nullptr || sender->playback_frame <= record->frame || (record->state.flags & MP_ENEMY_FLAG_MATRIX)) {
+    if (sender == nullptr || sender->playback_frame <= record->frame || (record->state.flags & MP_ENEMY_FLAG_MATRIX)) {
         return;
     }
 
-    float t = (float)(sender->playback_frame - record->frame) / (float)(next->frame - record->frame);
-    if (t > 1.0f) {
-        t = 1.0f;
+    EnemyRecord* next = record_after(enemy, record->frame);
+    MPEnemyState* from = &record->state;
+    MPEnemyState* to = nullptr;
+    float t = 0.0f;
+
+    if (next != nullptr) {
+        to = &next->state;
+        t = (float)(sender->playback_frame - record->frame) / (float)(next->frame - record->frame);
+    } else {
+        // The next one is late: keep it going the way it was going, for as long as states come apart
+        EnemyRecord* before = nullptr;
+        for (int i = 0; i < ENEMY_HISTORY; i++) {
+            EnemyRecord* other = &enemy->history[i];
+            if (other->frame != 0 && other->frame < record->frame && (before == nullptr || other->frame > before->frame)) {
+                before = other;
+            }
+        }
+
+        if (before == nullptr || record->frame - before->frame > FAR_SEND_INTERVAL) {
+            return;
+        }
+
+        // From the one before through this one, and on as far again
+        to = &record->state;
+        from = &before->state;
+        t = 1.0f + (float)(sender->playback_frame - record->frame) / (float)(record->frame - before->frame);
     }
 
-    MPEnemyState* from = &record->state;
-    MPEnemyState* to = &next->state;
+    if (t > 2.0f) {
+        t = 2.0f;
+    }
+
     moby->position.x = from->position[0] + (to->position[0] - from->position[0]) * t;
     moby->position.y = from->position[1] + (to->position[1] - from->position[1]) * t;
     moby->position.z = from->position[2] + (to->position[2] - from->position[2]) * t;
