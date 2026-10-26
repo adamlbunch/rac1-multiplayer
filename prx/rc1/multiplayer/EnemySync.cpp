@@ -159,6 +159,10 @@ static int n_outgoing_ = 0;
 // Where the test tools that read a running game's memory find our state (see rac1-coop's tools)
 u32 sync_off_ = 0;
 
+// Moby classes the test tools ask us to leave alone, to find one that can't be run by another game
+#define MAX_UNSYNCED_CLASSES 8
+static u16 unsynced_classes_[MAX_UNSYNCED_CLASSES];
+
 struct EnemySyncDebugInfo {
     char magic[8];
     SyncedEnemy* enemies;
@@ -167,10 +171,11 @@ struct EnemySyncDebugInfo {
     EnemySender* senders;
     u32* ticks;
     u32* off;
+    u16* unsynced_classes;
 };
 
 EnemySyncDebugInfo enemy_sync_debug_info_ = {
-    "ESYNC01", enemies_, sizeof(SyncedEnemy), MAX_ENEMIES, senders_, &ticks_, &sync_off_
+    "ESYNC01", enemies_, sizeof(SyncedEnemy), MAX_ENEMIES, senders_, &ticks_, &sync_off_, unsynced_classes_
 };
 
 static bool plausible_moby(Moby* moby) {
@@ -544,6 +549,12 @@ static int sync_index(Moby* moby) {
     u16 uid, spawn;
     if (moby < LEVEL_MOBYS_START || moby >= moby_ptr_end || !SpawnedMobys::identify(moby, &uid, &spawn)) {
         return -1;
+    }
+
+    for (int i = 0; i < MAX_UNSYNCED_CLASSES; i++) {
+        if (unsynced_classes_[i] != 0 && moby->o_class == (short)unsynced_classes_[i]) {
+            return -1;
+        }
     }
 
     int index = moby - LEVEL_MOBYS_START;
