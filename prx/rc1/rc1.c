@@ -335,6 +335,8 @@ Moby* spawn_moby_hook(u16 o_class) {
         return moby;
     }
 
+    _c_on_moby_spawned(moby);
+
     switch(moby->o_class) {
         // Weapons and projectiles
         case 121: // Bomb glove bomb
@@ -406,6 +408,20 @@ void set_moby_animation_hook(Moby* moby, u32 seq, u32 frame, u32 blend_frames) {
     _c_on_moby_animation_started(moby, blend_frames);
 }
 
+// Makes a record in the game's effect pool, see EffectSync
+SHK_HOOK(u8*, _allocate_effect, u32);
+u8* allocate_effect_hook(u32 type) {
+    u8* effect = SHK_CALL_HOOK(_allocate_effect, type);
+
+    _c_on_effect_allocated(effect);
+
+    return effect;
+}
+
+u8* _c_allocate_effect(u32 type) {
+    return SHK_CALL_HOOK(_allocate_effect, type);
+}
+
 SHK_HOOK(u64, init_gameplay);
 u64 init_gameplay_hook() {
     _c_before_init_gameplay();
@@ -451,6 +467,7 @@ void rc1_init() {
     SHK_BIND_HOOK(_moby_get_damage, _moby_get_damage_hook);
     SHK_BIND_HOOK(update_mobys, update_mobys_hook);
     SHK_BIND_HOOK(_set_moby_animation, set_moby_animation_hook);
+    SHK_BIND_HOOK(_allocate_effect, allocate_effect_hook);
     SHK_BIND_HOOK(metal_detector_spot_update_func, metal_detector_spot_update_func_hook);
     SHK_BIND_HOOK(bink_do_frame, bink_do_frame_hook);
     SHK_BIND_HOOK(perform_save_action, perform_save_action_hook);

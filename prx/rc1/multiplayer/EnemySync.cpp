@@ -8,6 +8,7 @@
 
 #include <rc1/Game.h>
 
+#include "EffectSync.h"
 #include "LevelMobys.h"
 #include "Mirror.h"
 #include "MobyAnimation.h"
@@ -651,6 +652,8 @@ bool EnemySync::update_mobys() {
         rank_ = (u32)sys_time_get_system_time() | 1;
     }
 
+    EffectSync::begin_frame();
+
     Moby* moby = build_moby_update_list();
     MOBY_UPDATE_LIST = moby;
 
@@ -682,6 +685,7 @@ bool EnemySync::update_mobys() {
     updating_index_ = -1;
 
     send_states();
+    EffectSync::end_frame();
 
     return true;
 }

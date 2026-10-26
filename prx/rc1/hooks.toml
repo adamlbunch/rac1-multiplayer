@@ -99,3 +99,7 @@ replaced_instr = "stdu r1, -0x80(r1)"
 [_set_moby_animation]
 addr = 0xfddc0
 replaced_instr = "stdu r1, -0xb0(r1)"
+
+[_allocate_effect]
+addr = 0x11e580
+replaced_instr = "stdu r1, -0x50(r1)"

@@ -75,6 +75,12 @@ struct Mirror {
     // How far the nearest other player we're showing is from `position`, squared. Huge if there's nobody.
     static float nearest_player_distance_sq(const Vec4* position);
 
+    // The number of the snapshot of our player we sent last
+    static u32 sent_frame();
+
+    // Which of a player's frames we're showing now, false if we aren't showing them
+    static bool shown_frame(u16 uuid, u32* frame);
+
     // A player's hero moby was deleted
     static void forget(u16 uuid);
 

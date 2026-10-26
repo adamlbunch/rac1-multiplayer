@@ -16,6 +16,7 @@
 #include "../Mirror.h"
 #include "../WorldSync.h"
 #include "../EnemySync.h"
+#include "../EffectSync.h"
 #include "../GadgetModels.h"
 
 GameClient::GameClient(char *ip, int port) : Client(ip, port) {
@@ -57,6 +58,7 @@ void GameClient::reset() {
     moby_delete_all();
     WorldSync::reset();
     EnemySync::reset();
+    EffectSync::reset();
 
     for (size_t i = 0; i < monitored_addresses_.size(); i++) {
         delete monitored_addresses_[i];
@@ -876,6 +878,9 @@ bool GameClient::update(MPPacketHeader *header, void *packet_data) {
             case MP_PACKET_ENEMY_STATE:
                 EnemySync::receive((MPPacketEnemyState*)packet_data, header->size);
                 break;
+            case MP_PACKET_EFFECTS:
+                EffectSync::receive((MPPacketEffects*)packet_data, header->size);
+                break;
             default:
                 Logger::error("Received %ld bytes of unknown packet %d:", received(), header->type);
                 Logger::error("> Advertised size: %d", sizeof(MPPacketHeader) + header->size);
@@ -966,6 +971,7 @@ void GameClient::on_tick() {
         Mirror::on_tick();
         WorldSync::on_tick(Game::shared().connected_client());
         EnemySync::on_tick(Game::shared().connected_client());
+        EffectSync::on_tick();
     }
 
     {

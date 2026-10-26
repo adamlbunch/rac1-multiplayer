@@ -549,6 +549,20 @@ float Mirror::nearest_player_distance_sq(const Vec4* position) {
     return nearest;
 }
 
+u32 Mirror::sent_frame() {
+    return frame_;
+}
+
+bool Mirror::shown_frame(u16 uuid, u32* frame) {
+    RemotePlayer* remote = find_remote(uuid);
+    if (remote == nullptr || !remote->showing) {
+        return false;
+    }
+
+    *frame = remote->playback_frame;
+    return true;
+}
+
 bool Mirror::is_mirrored(u16 uuid) {
     RemotePlayer* remote = find_remote(uuid);
     return remote != nullptr && remote->showing;

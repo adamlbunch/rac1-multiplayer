@@ -90,6 +90,8 @@ Here is an example of how a packet with type set to MP_PACKET_MOBY_UPDATE and no
 #define MP_PACKET_MOBY_HIT            35
 #define MP_PACKET_MOBY_KILLED         36
 #define MP_PACKET_ENEMY_STATE         37
+// The server passes packets from 38 to 63 on to the other players on the level as they are
+#define MP_PACKET_EFFECTS             38
 
 #define MP_PACKET_FLAG_RPC           0x1
 
@@ -567,6 +569,20 @@ typedef struct {
 typedef struct {
     float rows[12];       // Rows 0-2 of the moby's transform
 } MPEnemyMatrix;
+
+// The effects (flames, bolts, sparks, lightning...) a player's weapon and the things it fired made in one frame. They're
+//  the game's own effect records, which hold everything about the effect in world coordinates, so other games make
+//  the same ones and the game animates them the same way.
+//
+// Followed by `n_effects` effect records of MP_EFFECT_SIZE bytes.
+#define MP_EFFECT_SIZE 64
+
+typedef struct {
+    u16 sender;           // Filled in by the server, see MPPacketPlayerState
+    u8 n_effects;
+    u8 pad;
+    u32 frame;            // The sender's player snapshot they belong with, see MPPacketPlayerState
+} MPPacketEffects;
 
 #define MP_LEVEL_CONFIG_OPTION_BLOCK_MOBY_UID   1
 #define MP_LEVEL_CONFIG_OPTION_BLOCK_OCLASS     2
