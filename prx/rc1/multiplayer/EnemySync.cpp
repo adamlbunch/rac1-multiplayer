@@ -141,6 +141,20 @@ static MPEnemyState outgoing_states_[MAX_SENT_ENEMIES];
 static MPEnemyMatrix outgoing_matrices_[MAX_SENT_ENEMIES];
 static int n_outgoing_ = 0;
 
+// Where the test tools that read a running game's memory find our state (see rac1-coop's tools)
+struct EnemySyncDebugInfo {
+    char magic[8];
+    SyncedEnemy* enemies;
+    u32 enemy_size;
+    u32 max_enemies;
+    EnemySender* senders;
+    u32* ticks;
+};
+
+EnemySyncDebugInfo enemy_sync_debug_info_ = {
+    "ESYNC01", enemies_, sizeof(SyncedEnemy), MAX_ENEMIES, senders_, &ticks_
+};
+
 static bool plausible_moby(Moby* moby) {
     u32 address = (u32)moby;
     return address >= 0x10000 && address < 0xC0000000 && (address & 0xf) == 0;
@@ -588,14 +602,14 @@ static void after_transform(Moby* moby) {
             }
         }
 
-        Logger::debug("EnemySync: running moby %d (o_class %d) for everyone", moby->uid, moby->o_class);
+        Logger::debug("EnemySync %u: running moby %d (o_class %d) for everyone", ticks_, moby->uid, moby->o_class);
         enemy->owner = OWNER_SELF;
         enemy->animation.valid = false;
     }
 
     // Another game asked for it: this frame's state is the last one we run, the claimant picks up from there
     if (enemy->handoff_to != 0 && ticks_ - enemy->handoff_tick < CLAIM_TIMEOUT) {
-        Logger::debug("EnemySync: handing moby %d (o_class %d) over to player %d", moby->uid, moby->o_class,
+        Logger::debug("EnemySync %u: handing moby %d (o_class %d) over to player %d", ticks_, moby->uid, moby->o_class,
                       enemy->handoff_to);
 
         enemy->handoff.frame = frame_;
@@ -788,8 +802,8 @@ static void receive_state(EnemySender* sender_info, u32 frame, MPEnemyState* sta
         if (enemy != nullptr && enemy->owner == sender && enemy->claim_tick != 0 &&
             ticks_ - enemy->claim_tick < CLAIM_TIMEOUT) {
             // The game running it handed it to us: it picks up from exactly where that game left it
-            Logger::debug("EnemySync: took over moby %d (o_class %d) from player %d", state->uid, state->o_class,
-                          sender);
+            Logger::debug("EnemySync %u: took over moby %d (o_class %d) from player %d", ticks_, state->uid,
+                          state->o_class, sender);
 
             EnemyRecord record;
             record.frame = frame;
@@ -835,7 +849,8 @@ static void receive_state(EnemySender* sender_info, u32 frame, MPEnemyState* sta
     }
 
     if (enemy->owner != sender) {
-        Logger::debug("EnemySync: moby %d (o_class %d) is run by player %d", state->uid, state->o_class, sender);
+        Logger::debug("EnemySync %u: moby %d (o_class %d) is run by player %d", ticks_, state->uid, state->o_class,
+                      sender);
         enemy->owner = sender;
         enemy->handoff_to = 0;
         memset(enemy->history, 0, sizeof(enemy->history));
@@ -957,6 +972,8 @@ void EnemySync::on_get_damage(Moby* moby) {
 }
 
 void EnemySync::reset() {
+    Logger::debug("EnemySync %u: reset", ticks_);
+
     memset(enemies_, 0, sizeof(enemies_));
     memset(senders_, 0, sizeof(senders_));
     memset(slots_, 0, sizeof(slots_));
