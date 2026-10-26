@@ -64,6 +64,10 @@ public:
     bool force_load_save_file;
     bool have_save_file;
 
+    // The server asked us to save. It asks often (every unlock, a burst when joining), so we save once we can, see
+    //  on_tick.
+    bool autosave_pending;
+
     int dialogs_dismissed;
 private:
     Game() {

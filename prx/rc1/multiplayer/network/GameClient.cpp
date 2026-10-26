@@ -572,7 +572,7 @@ void GameClient::update_set_state(MPPacketSetState* packet) {
             switch (packet->value) {
                 case 0:
                     Logger::debug("Server told us to save.");
-                    perform_save_operation(3);
+                    Game::shared().autosave_pending = true;
                     break;
                 case 1:
                     Logger::debug("Server told us to load stored savefile.");

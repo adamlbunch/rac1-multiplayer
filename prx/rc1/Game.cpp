@@ -58,6 +58,7 @@ void Game::init() {
     force_load_save_file = false;
     have_save_file = false;
     manual_save_enabled = false;
+    autosave_pending = false;
 
     previous_user_option_camera_left_right_movement = -1;
     previous_user_option_camera_up_down_movement = -1;
@@ -163,9 +164,21 @@ void Game::on_tick() {
     if (client_) {
         client_->flush();
 
-        if (force_load_save_file && have_save_file && DataClient::shared() != nullptr && DataClient::shared()->is_running()) {
+        DataClient* data_client = DataClient::shared();
+        bool data_ready = data_client != nullptr && data_client->is_running() && !data_client->receiving();
+
+        // Not while a save is still arriving: we'd load half of each
+        if (force_load_save_file && have_save_file && data_ready) {
             force_load_save_file = false;
             load();
+        }
+
+        // The game builds its save in place, so saving again while the last one is still being sent would send a mix
+        //  of both. And not before we've loaded the save the server told us to, or while loading a level.
+        if (autosave_pending && !force_load_save_file && data_ready && !data_client->busy() &&
+            game_state == PlayerControl) {
+            autosave_pending = false;
+            perform_save_operation(3);
         }
     }
 }
@@ -533,6 +546,12 @@ void Game::save(void* savedata) {
 }
 
 void Game::load() {
+    // A save that starts arriving now waits until we're done with this one
+    if (!DataClient::lock_save_file()) {
+        force_load_save_file = true;
+        return;
+    }
+
     void* data = DataClient::save_file();
 
     Logger::info("Loading savefile...");
@@ -540,6 +559,8 @@ void Game::load() {
 
     destination_planet = *(int*)((u32)data + 0x18);
     should_load_destination_planet = true;
+
+    DataClient::unlock_save_file();
 
     // Initialize Proxy Array based on unlocked weapons/gadgets/levels
 

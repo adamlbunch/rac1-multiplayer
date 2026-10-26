@@ -11,6 +11,26 @@
 bool DataClient::stop = false;
 DataClient* DataClient::data_client_ = nullptr;
 u8 DataClient::save_file_[0xB0000] __attribute__((aligned(128)));
+volatile bool DataClient::save_file_locked_ = false;
+
+// The game's thread locks, ours receives: each says what it's doing before looking at what the other does, so at least
+//  one of them sees the other
+bool DataClient::lock_save_file() {
+    save_file_locked_ = true;
+    __sync_synchronize();
+
+    if (data_client_ != nullptr && data_client_->is_receiving_) {
+        save_file_locked_ = false;
+        return false;
+    }
+
+    return true;
+}
+
+void DataClient::unlock_save_file() {
+    __sync_synchronize();
+    save_file_locked_ = false;
+}
 
 ssize_t send_all(int sockfd, const void *buf, size_t len) {
     const u8 *p = (const u8 *)buf;
@@ -87,6 +107,11 @@ void DataClient::run() {
                             if (target_size > sizeof(save_file_)) {
                                 Logger::error("Server sent a save file of %d bytes, more than a save holds", target_size);
                                 return;
+                            }
+
+                            __sync_synchronize();
+                            while (save_file_locked_) {
+                                sys_timer_usleep(1000);
                             }
 
                             target_buffer = save_file_;

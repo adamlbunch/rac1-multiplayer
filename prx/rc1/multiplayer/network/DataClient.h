@@ -51,6 +51,10 @@ public:
         return running_;
     }
 
+    bool receiving() const {
+        return is_receiving_;
+    }
+
     static void transmit(MPFileType file_type, void* data, size_t len);
 
     // The last save file the server sent us. It's in memory of our own: it used to be written to 0x1000000, which is
@@ -60,16 +64,22 @@ public:
         return save_file_;
     }
 
+    // While the game loads the save file, a save that starts arriving waits instead of being written over it. Lock
+    //  fails if one is arriving already.
+    static bool lock_save_file();
+    static void unlock_save_file();
+
     static bool stop;
 private:
     static u8 save_file_[0xB0000];
+    static volatile bool save_file_locked_;
 
     int sockfd_;
     u32 key_;
 
     bool running_;
 
-    bool is_receiving_;
+    volatile bool is_receiving_;
 
     bool should_transmit_;
     void* file_to_transmit_;
