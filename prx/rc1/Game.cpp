@@ -81,6 +81,27 @@ void Game::reset() {
     }
 }
 
+// Health upgrades: the Premium and Ultra Nanotech the player has, and the max health they give
+#define PREMIUM_NANOTECH (*(u8*)0x96bff4)
+#define ULTRA_NANOTECH (*(u8*)0x96bff5)
+#define MAX_HEALTH (*(s32*)0x71fb28)
+#define HEALTH (*(s32*)0x96bf88)
+
+// A health upgrade another player bought reaches us as the item only: the game sets the max health it gives when it's
+//  bought here or a save is loaded. So it's set here, and topped up like buying it does.
+static void apply_health_upgrades() {
+    if (game_state != PlayerControl || ratchet_moby == nullptr || HEALTH <= 0) {
+        return;
+    }
+
+    s32 max_health = ULTRA_NANOTECH ? 8 : (PREMIUM_NANOTECH ? 5 : 0);
+    if (max_health > MAX_HEALTH) {
+        Logger::info("Health upgrade from another player: max health %d -> %d", MAX_HEALTH, max_health);
+        MAX_HEALTH = max_health;
+        HEALTH = max_health;
+    }
+}
+
 static Profiler full_tick_timer_("full tick");
 static Profiler tick_timer_("tick");
 static Profiler check_level_flags_("check level flags");
@@ -99,6 +120,10 @@ void Game::on_tick() {
         if (ratchet_moby != nullptr) {
             Profiler::Scope scope(&check_level_flags_);
             check_level_flags();
+        }
+
+        if (connected_client() != nullptr) {
+            apply_health_upgrades();
         }
     }
 
