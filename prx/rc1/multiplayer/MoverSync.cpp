@@ -20,6 +20,9 @@
 
 // The most of a mover's variables we keep in step, and of those that change while it runs
 #define VARS_MAX 0x180
+
+// No moby's variables are longer than this: a longer gap to the next ones means other memory comes in between
+#define LONGEST_VARS 0x400
 #define MAX_WORDS 48
 
 // How often the game whose player is nearest sends a mover: often while another player is near enough to see it
@@ -254,13 +257,15 @@ static bool drawn(Moby* moby) {
 }
 
 // How much of the memory at `vars` is the moby's own: up to the next moby's variables
-static u16 vars_size_of(Moby* moby) {
+// How far it is from the moby's variables to the next moby's, or 0 if that's further than any moby's variables are
+//  long: then something else comes after them, and their size isn't known from it
+static u32 vars_gap(Moby* moby) {
     u32 vars = (u32)moby->vars;
     if (vars == 0 || !looks_like_pointer(vars)) {
         return 0;
     }
 
-    u32 next = vars + VARS_MAX;
+    u32 next = vars + LONGEST_VARS + 1;
     for (Moby* other = LEVEL_MOBYS_START; other < moby_ptr_end; other++) {
         u32 other_vars = (u32)other->vars;
         if (other_vars > vars && other_vars < next) {
@@ -268,7 +273,21 @@ static u16 vars_size_of(Moby* moby) {
         }
     }
 
-    return (u16)((next - vars) & ~3);
+    u32 gap = (next - vars) & ~3;
+    return gap <= LONGEST_VARS ? gap : 0;
+}
+
+// How much of the memory at `vars` is the moby's own, as far as we keep in step: up to the next moby's variables.
+//  For the last ones before something else, as long as another moby of its class has them. 0 if we can't tell.
+static u16 vars_size_of(Moby* moby) {
+    u32 gap = vars_gap(moby);
+    for (Moby* other = LEVEL_MOBYS_START; gap == 0 && other < moby_ptr_end; other++) {
+        if (other != moby && other->o_class == moby->o_class && other->state >= 0) {
+            gap = vars_gap(other);
+        }
+    }
+
+    return (u16)(gap < VARS_MAX ? gap : VARS_MAX);
 }
 
 // Notes which of its variables hold the channel of a sound it plays here
