@@ -71,7 +71,8 @@ struct EnemyRecord {
 
 struct SyncedEnemy {
     bool used;
-    u16 index;
+    u16 index;              // In our moby table
+    u16 uid;
     u16 o_class;
 
     u16 owner;              // The game running it: OWNER_SELF, or the other player's ID
@@ -179,6 +180,7 @@ static SyncedEnemy* add_enemy(int index, Moby* moby) {
             memset(enemy, 0, sizeof(SyncedEnemy));
             enemy->used = true;
             enemy->index = index;
+            enemy->uid = moby->uid;
             enemy->o_class = moby->o_class;
             enemy->owner = OWNER_NONE;
             slots_[index] = i + 1;
@@ -308,7 +310,7 @@ static void send_state(SyncedEnemy* enemy, Moby* moby, float distance, float oth
     MPEnemyState* state = &outgoing_states_[n_outgoing_];
     memset(state, 0, sizeof(MPEnemyState));
 
-    state->index = enemy->index;
+    state->uid = moby->uid;
     state->o_class = moby->o_class;
     state->state = moby->state;
     state->alpha = moby->alpha;
@@ -465,8 +467,19 @@ static void after_update(Moby* moby) {
             enemy->reacting = false;
         }
 
-        // Its own reaction plays out right away, while the one from the game running it is still on its way
-        if (enemy->reacting || moby->state < 0) {
+        if (moby->state < 0) {
+            return;
+        }
+
+        // Its own reaction plays out right away, while the one from the game running it is still on its way. Once
+        //  that one shows up, it follows it, so it flies off and lands the same way. Its own AI keeps going, so it
+        //  still dies (or recovers) here when it lands where the other game's did.
+        if (enemy->reacting) {
+            EnemyRecord* record = record_to_show(enemy);
+            if (record != nullptr && record->state.state == (u8)moby->state) {
+                apply_state(enemy, moby);
+            }
+
             return;
         }
     }
@@ -522,7 +535,7 @@ static void after_transform(Moby* moby) {
             }
         }
 
-        Logger::debug("EnemySync: running moby %d (o_class %d) for everyone", index, moby->o_class);
+        Logger::debug("EnemySync: running moby %d (o_class %d) for everyone", moby->uid, moby->o_class);
         enemy->owner = OWNER_SELF;
         enemy->animation.valid = false;
     }
@@ -656,10 +669,10 @@ void EnemySync::on_tick(Client* client) {
         }
 
         Moby* moby = LEVEL_MOBYS_START + enemy->index;
-        if (moby->state < 0 || moby->o_class != (short)enemy->o_class) {
+        if (moby->state < 0 || moby->uid != enemy->uid || moby->o_class != (short)enemy->o_class) {
             // Gone in our game. If we ran it, it goes in the others too.
             if (enemy->owner == OWNER_SELF) {
-                client->send_ack(Packet::make_moby_killed_packet(moby->uid, enemy->o_class, enemy->index));
+                client->send_ack(Packet::make_moby_killed_packet(enemy->uid, enemy->o_class));
             }
 
             remove_enemy(enemy);
@@ -676,16 +689,13 @@ void EnemySync::on_tick(Client* client) {
 static void receive_state(EnemySender* sender_info, u32 frame, MPEnemyState* state, MPEnemyMatrix* matrix) {
     u16 sender = sender_info->uuid;
 
-    if (state->index >= MAX_LEVEL_MOBYS) {
+    Moby* moby = LevelMobys::find(state->uid, state->o_class);
+    int index = LevelMobys::index_of(moby);
+    if (moby == nullptr || index < 0 || index >= MAX_LEVEL_MOBYS) {
         return;
     }
 
-    Moby* moby = LevelMobys::find(state->index, state->o_class);
-    if (moby == nullptr) {
-        return;
-    }
-
-    SyncedEnemy* enemy = find_enemy(state->index);
+    SyncedEnemy* enemy = find_enemy(index);
 
     if (enemy != nullptr && enemy->owner == OWNER_SELF) {
         // We both run it: the game whose player is nearer keeps it
@@ -700,14 +710,14 @@ static void receive_state(EnemySender* sender_info, u32 frame, MPEnemyState* sta
     }
 
     if (enemy == nullptr) {
-        enemy = add_enemy(state->index, moby);
+        enemy = add_enemy(index, moby);
         if (enemy == nullptr) {
             return;
         }
     }
 
     if (enemy->owner != sender) {
-        Logger::debug("EnemySync: moby %d (o_class %d) is run by player %d", state->index, state->o_class, sender);
+        Logger::debug("EnemySync: moby %d (o_class %d) is run by player %d", state->uid, state->o_class, sender);
         enemy->owner = sender;
         memset(enemy->history, 0, sizeof(enemy->history));
         enemy->animation.valid = false;

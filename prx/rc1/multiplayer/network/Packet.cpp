@@ -393,14 +393,13 @@ Packet* Packet::make_ui_reset_packet() {
     return packet;
 }
 
-Packet* Packet::make_moby_killed_packet(u16 uid, u16 o_class, u16 index) {
+Packet* Packet::make_moby_killed_packet(u16 uid, u16 o_class) {
     Packet* packet = new Packet(sizeof(MPPacketMobyKilled));
     packet->header->type = MP_PACKET_MOBY_KILLED;
 
     MPPacketMobyKilled* body = (MPPacketMobyKilled*)packet->body;
     body->uid = uid;
     body->o_class = o_class;
-    body->index_1 = index + 1;
 
     return packet;
 }

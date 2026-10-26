@@ -1,7 +1,7 @@
 //
-// The mobys placed in the level. The game's moby table starts with them, in the same order in every game, and
-//  continues with the ones spawned while playing. Their UIDs aren't always unique, so games tell them apart by their
-//  position in the table.
+// The mobys placed in the level. The game's moby table starts with them and continues with the ones spawned while
+//  playing. Every game has the same ones under the same UIDs, which are unique among them, but not always in the same
+//  place in the table: when a player respawns, their game rebuilds the table without the crates they broke.
 //
 
 #ifndef RAC1_MULTIPLAYER_LEVELMOBYS_H
@@ -22,7 +22,7 @@ struct LevelMobys {
         return LEVEL_MOBYS_END - LEVEL_MOBYS_START;
     }
 
-    // Position of the moby in the table, or -1 if it isn't one of the level's own mobys (or is our player, or one of
+    // Position of the moby in our table, or -1 if it isn't one of the level's own mobys (or is our player, or one of
     //  our copies of other players' things)
     static inline int index_of(Moby* moby) {
         if (moby < LEVEL_MOBYS_START || moby >= LEVEL_MOBYS_END || moby == ratchet_moby ||
@@ -33,20 +33,8 @@ struct LevelMobys {
         return moby - LEVEL_MOBYS_START;
     }
 
-    // The level's moby at `index` if it's alive and of that class
-    static inline Moby* find(u32 index, u16 o_class) {
-        if (index >= count()) {
-            return nullptr;
-        }
-
-        Moby* moby = LEVEL_MOBYS_START + index;
-        if (moby->state < 0 || moby->o_class != (short)o_class || moby == ratchet_moby ||
-            moby->p_update == LEVEL_MOBYS_MP_UPDATE_FUNC) {
-            return nullptr;
-        }
-
-        return moby;
-    }
+    // The level's moby with this UID if it's alive and of that class
+    static Moby* find(u16 uid, u16 o_class);
 };
 
 #endif //RAC1_MULTIPLAYER_LEVELMOBYS_H

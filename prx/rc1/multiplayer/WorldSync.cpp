@@ -39,7 +39,6 @@ struct HitMoby {
 struct PendingKill {
     u16 uid;
     u16 o_class;
-    u16 index_1;    // Position in the level's moby table plus one, 0 when the sender's game didn't say
     u32 deadline;
 };
 
@@ -70,28 +69,9 @@ static bool plausible_moby(Moby* moby) {
     return address >= 0x10000 && address < 0xC0000000 && (address & 0xf) == 0;
 }
 
-// Placed in the level (as opposed to spawned while playing), so every game has it in the same place
+// Placed in the level (as opposed to spawned while playing), so every game has it under the same UID
 static bool is_level_moby(Moby* moby) {
     return LevelMobys::index_of(moby) >= 0;
-}
-
-// By its position in the moby table, or by UID for older games that don't send it
-static Moby* find_level_moby(u16 uid, u16 o_class, u32 index_1) {
-    if (index_1 != 0) {
-        return LevelMobys::find(index_1 - 1, o_class);
-    }
-
-    for (Moby* moby = LEVEL_MOBYS_START; moby < LEVEL_MOBYS_END; moby++) {
-        if (moby->state >= 0 && moby->uid == uid && moby->o_class == o_class) {
-            return moby;
-        }
-    }
-
-    return nullptr;
-}
-
-static u16 level_index(Moby* moby) {
-    return moby - LEVEL_MOBYS_START;
 }
 
 static void remember_hit(Moby* moby) {
@@ -184,8 +164,7 @@ static void send_record(Client* client, u8* record) {
     MPPacketMobyHit* hit = (MPPacketMobyHit*)packet->body;
     hit->uid = target->uid;
     hit->o_class = target->o_class;
-    hit->index = level_index(target);
-    hit->source_index = from_enemy ? level_index(source) : 0;
+    hit->source_uid = from_enemy ? source->uid : 0;
     hit->source_o_class = from_enemy ? source->o_class : 0xffff;
     memcpy(&hit->vector0, record + 0x00, sizeof(Vec4));
     memcpy(&hit->vector1, record + 0x10, sizeof(Vec4));
@@ -199,7 +178,7 @@ static void send_record(Client* client, u8* record) {
     client->send_ack(packet);
 
     if (target->state < 0) {
-        client->send_ack(Packet::make_moby_killed_packet(target->uid, target->o_class, level_index(target)));
+        client->send_ack(Packet::make_moby_killed_packet(target->uid, target->o_class));
     } else {
         remember_hit(target);
     }
@@ -214,7 +193,7 @@ static void check_hit_mobys(Client* client) {
 
         Moby* moby = hit->moby;
         if (moby->state < 0 || moby->uid != hit->uid || moby->o_class != hit->o_class) {
-            client->send_ack(Packet::make_moby_killed_packet(hit->uid, hit->o_class, level_index(moby)));
+            client->send_ack(Packet::make_moby_killed_packet(hit->uid, hit->o_class));
             hit->moby = nullptr;
             continue;
         }
@@ -232,7 +211,7 @@ static void apply_pending_kills() {
             continue;
         }
 
-        Moby* moby = find_level_moby(kill->uid, kill->o_class, kill->index_1);
+        Moby* moby = LevelMobys::find(kill->uid, kill->o_class);
         if (moby == nullptr) {
             kill->o_class = 0xffff;
             continue;
@@ -330,17 +309,15 @@ void WorldSync::on_tick(Client* client) {
 }
 
 void WorldSync::receive_hit(MPPacketMobyHit* hit, size_t len) {
-    bool has_index = len >= sizeof(MPPacketMobyHit);
-
-    Moby* target = find_level_moby(hit->uid, hit->o_class, has_index ? hit->index + 1 : 0);
+    Moby* target = LevelMobys::find(hit->uid, hit->o_class);
     if (target == nullptr) {
         return;
     }
 
     // Whoever made the hit: the enemy that did, or the player's copy in our game if we have it
     Moby* source = nullptr;
-    if (has_index && hit->source_o_class != 0xffff) {
-        source = LevelMobys::find(hit->source_index, hit->source_o_class);
+    if (len >= sizeof(MPPacketMobyHit) && hit->source_o_class != 0xffff) {
+        source = LevelMobys::find(hit->source_uid, hit->source_o_class);
     } else {
         GameClient* client = (GameClient*)Game::shared().client();
         source = client != nullptr ? client->moby_for_uuid(hit->sender) : nullptr;
@@ -400,8 +377,7 @@ void WorldSync::receive_killed(MPPacketMobyKilled* killed) {
     PendingKill* free_slot = nullptr;
     for (int i = 0; i < MAX_PENDING_KILLS; i++) {
         PendingKill* kill = &pending_kills_[i];
-        if (kill->o_class != 0xffff && kill->uid == killed->uid && kill->o_class == killed->o_class &&
-            kill->index_1 == killed->index_1) {
+        if (kill->o_class != 0xffff && kill->uid == killed->uid && kill->o_class == killed->o_class) {
             return;
         }
 
@@ -413,7 +389,6 @@ void WorldSync::receive_killed(MPPacketMobyKilled* killed) {
     if (free_slot != nullptr) {
         free_slot->uid = killed->uid;
         free_slot->o_class = killed->o_class;
-        free_slot->index_1 = killed->index_1;
         free_slot->deadline = ticks_ + KILL_GRACE_TICKS;
     }
 }

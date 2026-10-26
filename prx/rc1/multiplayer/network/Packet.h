@@ -500,18 +500,14 @@ typedef struct {
     u32 field30;
     Vec4 vector0;
     Vec4 vector1;
-    // From API version 15, older games don't send these. Mobys are told apart by their position in the level's moby
-    //  table, the same in every game, since UIDs aren't always unique.
-    u16 index;
-    // What made the hit: one of the level's own mobys (an enemy run by the sender's game, see MPPacketEnemyState), or
-    //  the sender's player when source_o_class is 0xffff
-    u16 source_index;
+    // From API version 15, older games don't send these. What made the hit: one of the level's own mobys (an enemy
+    //  run by the sender's game, see MPPacketEnemyState), or the sender's player when source_o_class is 0xffff.
+    u16 source_uid;
     u16 source_o_class;
-    u16 pad2;
 } MPPacketMobyHit;
 
 // What older games send of MPPacketMobyHit
-#define MP_MOBY_HIT_V14_SIZE (sizeof(MPPacketMobyHit) - 8)
+#define MP_MOBY_HIT_V14_SIZE (sizeof(MPPacketMobyHit) - 4)
 
 // One of the level's mobys a player had damaged is gone in their game. Backs up MPPacketMobyHit for kills that
 //  don't come down to damage the other games could apply.
@@ -519,7 +515,7 @@ typedef struct {
     u16 sender;
     u16 uid;
     u16 o_class;
-    u16 index_1;          // Position in the level's moby table plus one, or 0 from older games that don't send it
+    u16 pad;
 } MPPacketMobyKilled;
 
 // The animation part of a moby's state: the game's own fields from 0x50, see Mirror.cpp
@@ -553,7 +549,7 @@ typedef struct {
 #define MP_ENEMY_FLAG_MATRIX  0x1   // The moby sets its own transform rather than have the game build it
 
 typedef struct {
-    u16 index;            // Position in the level's moby table, the same in every game (UIDs aren't unique)
+    u16 uid;
     u16 o_class;
     u8 flags;
     u8 state;             // The moby's own state, the one its AI runs on
@@ -616,7 +612,7 @@ struct Packet {
     static Packet* make_file_upload_part_packet(u8 file_type, void* data, u32 len, u32 offset);
     static Packet* make_player_standing_on_moby_packet(u16 uuid);
     static Packet* make_ui_reset_packet();
-    static Packet* make_moby_killed_packet(u16 uid, u16 o_class, u16 index);
+    static Packet* make_moby_killed_packet(u16 uid, u16 o_class);
 };
 
 #endif
