@@ -82,6 +82,7 @@ static PendingRemoval pending_removals_[MAX_PENDING_REMOVALS];
 #define REDESTROY_TICKS (60 * 5)
 
 static MobyKey destroyed_[MAX_DESTROYED];
+static bool kept_[MAX_DESTROYED];          // Left alone since the last respawn: something holds on to it
 static int n_destroyed_ = 0;
 static int destroyed_planet_ = -1;
 static bool redestroy_pending_ = false;     // From when our player is back in control
@@ -90,6 +91,42 @@ static u32 redestroy_until_ = 0;
 // The next of those to tell a player who just arrived, -1 if there's nothing to tell
 #define RESENDS_PER_TICK 4
 static int resend_next_ = -1;
+
+// Whether we can take the moby out of the level without its own code: nothing else there holds its address. Mobys that
+//  work together keep each other's addresses (a chain of turrets, what one fired), and the game lets them go when one
+//  dies of its own; one we just delete would leave the others following an address of nothing, and the game crashes.
+static bool safe_to_remove(Moby* target) {
+    u32 start = (u32)target;
+    u32 end = start + sizeof(Moby);
+
+    for (Moby* moby = LEVEL_MOBYS_START; moby < moby_ptr_end; moby++) {
+        if (moby == target || moby->state < 0) {
+            continue;
+        }
+
+        u32* words = (u32*)moby;
+        for (u32 i = 0; i < sizeof(Moby) / 4; i++) {
+            // The game's update list goes through every moby
+            if (i * 4 != 0x28 && words[i] >= start && words[i] < end) {
+                return false;
+            }
+        }
+
+        u32 vars = (u32)moby->vars;
+        if (vars < 0x40000000 || vars >= 0x50000000) {
+            continue;
+        }
+
+        u32* vars_words = (u32*)vars;
+        for (u32 i = 0; i < 0x100 / 4; i++) {
+            if (vars_words[i] >= start && vars_words[i] < end) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
 
 static void note_destroyed(const MobyKey* key) {
     if (key->spawn != 0) {
@@ -265,13 +302,22 @@ static void redestroy() {
     }
 
     for (int i = 0; i < n_destroyed_; i++) {
-        Moby* moby = LevelMobys::find(destroyed_[i].uid, destroyed_[i].o_class);
-        if (moby != nullptr) {
-            Logger::debug("WorldSync: removing moby %d (o_class %d) again, it was destroyed before we respawned",
-                          destroyed_[i].uid, destroyed_[i].o_class);
-            moby->state = -1;
-            delete_moby(moby);
+        Moby* moby = kept_[i] ? nullptr : LevelMobys::find(destroyed_[i].uid, destroyed_[i].o_class);
+        if (moby == nullptr) {
+            continue;
         }
+
+        if (!safe_to_remove(moby)) {
+            Logger::debug("WorldSync: leaving moby %d (o_class %d) here, others hold on to it", destroyed_[i].uid,
+                          destroyed_[i].o_class);
+            kept_[i] = true;
+            continue;
+        }
+
+        Logger::debug("WorldSync: removing moby %d (o_class %d) again, it was destroyed before we respawned",
+                      destroyed_[i].uid, destroyed_[i].o_class);
+        moby->state = -1;
+        delete_moby(moby);
     }
 }
 
@@ -327,11 +373,17 @@ static void apply_pending_kills() {
         }
 
         if ((s32)(ticks_ - kill->deadline) >= 0 || EnemySync::is_copy(moby)) {
+            kill->used = false;
+            if (!EnemySync::is_copy(moby) && !safe_to_remove(moby)) {
+                Logger::debug("WorldSync: leaving moby %d/%d (o_class %d) another player destroyed, others hold on "
+                              "to it", kill->key.uid, kill->key.spawn, kill->key.o_class);
+                continue;
+            }
+
             Logger::debug("WorldSync: removing moby %d/%d (o_class %d) another player destroyed", kill->key.uid,
                           kill->key.spawn, kill->key.o_class);
             moby->state = -1;
             delete_moby(moby);
-            kill->used = false;
         }
     }
 }
@@ -429,11 +481,17 @@ static void apply_pending_removals() {
         }
 
         if ((s32)(ticks_ - removal->deadline) >= 0) {
+            removal->used = false;
+            if (!safe_to_remove(moby)) {
+                Logger::debug("WorldSync: leaving moby %d (o_class %d) another player's game recorded as gone for "
+                              "good, others hold on to it", removal->uid, moby->o_class);
+                continue;
+            }
+
             Logger::debug("WorldSync: removing moby %d (o_class %d) another player's game recorded as gone for good",
                           removal->uid, moby->o_class);
             moby->state = -1;
             delete_moby(moby);
-            removal->used = false;
         }
     }
 }
@@ -572,7 +630,7 @@ void WorldSync::receive_killed(MPPacketMobyKilled* killed) {
 
     // A lot at once (what was destroyed before we came): no time to play their deaths
     Moby* moby = SpawnedMobys::find(key.uid, key.spawn, key.o_class);
-    if (moby != nullptr) {
+    if (moby != nullptr && safe_to_remove(moby)) {
         moby->state = -1;
         delete_moby(moby);
     }
@@ -584,6 +642,7 @@ void WorldSync::ignore_record(u32 index) {
 
 void WorldSync::reset() {
     // A respawn on the same level: what was destroyed is gone again. A new level starts with everything there.
+    memset(kept_, 0, sizeof(kept_));
     if (current_planet == destroyed_planet_) {
         redestroy_pending_ = n_destroyed_ > 0;
     } else {
