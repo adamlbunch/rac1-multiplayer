@@ -157,6 +157,8 @@ static MPEnemyMatrix outgoing_matrices_[MAX_SENT_ENEMIES];
 static int n_outgoing_ = 0;
 
 // Where the test tools that read a running game's memory find our state (see rac1-coop's tools)
+u32 sync_off_ = 0;
+
 struct EnemySyncDebugInfo {
     char magic[8];
     SyncedEnemy* enemies;
@@ -164,10 +166,11 @@ struct EnemySyncDebugInfo {
     u32 max_enemies;
     EnemySender* senders;
     u32* ticks;
+    u32* off;
 };
 
 EnemySyncDebugInfo enemy_sync_debug_info_ = {
-    "ESYNC01", enemies_, sizeof(SyncedEnemy), MAX_ENEMIES, senders_, &ticks_
+    "ESYNC01", enemies_, sizeof(SyncedEnemy), MAX_ENEMIES, senders_, &ticks_, &sync_off_
 };
 
 static bool plausible_moby(Moby* moby) {
@@ -562,7 +565,7 @@ static bool before_update(Moby* moby) {
     rotation_before_ = moby->rotation;
 
     SyncedEnemy* enemy = find_enemy(updating_index_);
-    if (enemy == nullptr || !(owner_is_remote(enemy) || enemy->reacting)) {
+    if (enemy == nullptr || !(owner_is_remote(enemy) || enemy->reacting) || (sync_off_ & SYNC_OFF_REMOTE_ENEMIES)) {
         return true;
     }
 
@@ -659,7 +662,8 @@ static void after_transform(Moby* moby) {
     updating_ = nullptr;
     updating_index_ = -1;
 
-    if (index < 0 || moby->state < 0 || ratchet_moby == nullptr || game_state != PlayerControl) {
+    if (index < 0 || moby->state < 0 || ratchet_moby == nullptr || game_state != PlayerControl ||
+        (sync_off_ & SYNC_OFF_ENEMY_SENDING)) {
         return;
     }
 
@@ -750,7 +754,7 @@ static void after_transform(Moby* moby) {
 }
 
 bool EnemySync::update_mobys() {
-    if (Game::shared().connected_client() == nullptr) {
+    if (Game::shared().connected_client() == nullptr || (sync_off_ & SYNC_OFF_UPDATE_LOOP)) {
         return false;
     }
 

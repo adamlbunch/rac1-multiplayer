@@ -127,7 +127,7 @@ void EffectSync::begin_frame() {
 }
 
 void EffectSync::on_allocated(u8* effect) {
-    if (effect == nullptr || game_state != PlayerControl) {
+    if (effect == nullptr || game_state != PlayerControl || (sync_off_ & SYNC_OFF_EFFECT_CAPTURE)) {
         return;
     }
 
@@ -300,7 +300,7 @@ void EffectSync::on_tick() {
             continue;
         }
 
-        if (game_state != PlayerControl) {
+        if (game_state != PlayerControl || (sync_off_ & SYNC_OFF_EFFECT_REPLAY)) {
             effect->used = false;
             continue;
         }

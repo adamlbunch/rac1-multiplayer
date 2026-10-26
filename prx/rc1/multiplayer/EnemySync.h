@@ -31,6 +31,16 @@
 
 struct Client;
 
+// Parts of the syncing the test tools can switch off in a running game, to find what causes a problem (see the
+//  marker in EnemySync.cpp). All on normally.
+#define SYNC_OFF_UPDATE_LOOP 0x1      // The game runs its own moby update loop: no enemy syncing at all
+#define SYNC_OFF_REMOTE_ENEMIES 0x2   // Every enemy runs here, none is drawn from another game
+#define SYNC_OFF_EFFECT_REPLAY 0x4    // Effects other games send aren't made
+#define SYNC_OFF_EFFECT_CAPTURE 0x8   // Effects aren't sent
+#define SYNC_OFF_ENEMY_SENDING 0x10   // Enemies aren't sent or taken over
+
+extern u32 sync_off_;
+
 struct EnemySync {
     // Our copy of the game's moby update loop. Returns false when the game should run its own (its profiling mode).
     static bool update_mobys();
