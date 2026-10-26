@@ -432,6 +432,78 @@ void update_player_hook() {
     _c_after_player_update();
 }
 
+// The game's functions that play a moby's sounds (see SoundSync): one of the moby's own class, of a given class, or of
+//  the level's. Each returns the sound channel it plays on, or -1.
+SHK_HOOK(s32, _play_moby_sound, s32, s32, Moby*);
+s32 play_moby_sound_hook(s32 index, s32 flags, Moby* moby) {
+    if (!_c_should_play_sound(moby)) {
+        return -1;
+    }
+
+    s32 handle = SHK_CALL_HOOK(_play_moby_sound, index, flags, moby);
+    _c_on_sound_played(0, index, flags, moby, 0, handle);
+    return handle;
+}
+
+SHK_HOOK(s32, _play_class_sound, s32, s32, Moby*, s32);
+s32 play_class_sound_hook(s32 index, s32 flags, Moby* moby, s32 o_class) {
+    if (!_c_should_play_sound(moby)) {
+        return -1;
+    }
+
+    s32 handle = SHK_CALL_HOOK(_play_class_sound, index, flags, moby, o_class);
+    _c_on_sound_played(1, index, flags, moby, (u16)o_class, handle);
+    return handle;
+}
+
+SHK_HOOK(s32, _play_level_sound, s32, s32, Moby*);
+s32 play_level_sound_hook(s32 index, s32 flags, Moby* moby) {
+    if (!_c_should_play_sound(moby)) {
+        return -1;
+    }
+
+    s32 handle = SHK_CALL_HOOK(_play_level_sound, index, flags, moby);
+    _c_on_sound_played(2, index, flags, moby, 0, handle);
+    return handle;
+}
+
+SHK_HOOK(s32, _play_level_sound2, s32, s32, Moby*);
+s32 play_level_sound2_hook(s32 index, s32 flags, Moby* moby) {
+    if (!_c_should_play_sound(moby)) {
+        return -1;
+    }
+
+    s32 handle = SHK_CALL_HOOK(_play_level_sound2, index, flags, moby);
+    _c_on_sound_played(3, index, flags, moby, 0, handle);
+    return handle;
+}
+
+SHK_HOOK(void, _stop_sound, s32);
+void stop_sound_hook(s32 handle) {
+    _c_on_sound_stopped(handle);
+    SHK_CALL_HOOK(_stop_sound, handle);
+}
+
+// Plays a sound another game played, with the same function (MP_SOUND_FUNCTION_*)
+s32 _c_play_sound(u8 function, s32 index, s32 flags, Moby* moby, u16 sound_class) {
+    switch (function) {
+        case 0:
+            return SHK_CALL_HOOK(_play_moby_sound, index, flags, moby);
+        case 1:
+            return SHK_CALL_HOOK(_play_class_sound, index, flags, moby, sound_class);
+        case 2:
+            return SHK_CALL_HOOK(_play_level_sound, index, flags, moby);
+        case 3:
+            return SHK_CALL_HOOK(_play_level_sound2, index, flags, moby);
+        default:
+            return -1;
+    }
+}
+
+void _c_stop_sound(s32 handle) {
+    SHK_CALL_HOOK(_stop_sound, handle);
+}
+
 SHK_HOOK(u64, init_gameplay);
 u64 init_gameplay_hook() {
     _c_before_init_gameplay();
@@ -479,6 +551,11 @@ void rc1_init() {
     SHK_BIND_HOOK(_set_moby_animation, set_moby_animation_hook);
     SHK_BIND_HOOK(_allocate_effect, allocate_effect_hook);
     SHK_BIND_HOOK(update_player, update_player_hook);
+    SHK_BIND_HOOK(_play_moby_sound, play_moby_sound_hook);
+    SHK_BIND_HOOK(_play_class_sound, play_class_sound_hook);
+    SHK_BIND_HOOK(_play_level_sound, play_level_sound_hook);
+    SHK_BIND_HOOK(_play_level_sound2, play_level_sound2_hook);
+    SHK_BIND_HOOK(_stop_sound, stop_sound_hook);
     SHK_BIND_HOOK(metal_detector_spot_update_func, metal_detector_spot_update_func_hook);
     SHK_BIND_HOOK(bink_do_frame, bink_do_frame_hook);
     SHK_BIND_HOOK(perform_save_action, perform_save_action_hook);

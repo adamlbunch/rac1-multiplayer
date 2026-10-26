@@ -565,6 +565,25 @@ bool Mirror::shown_frame(u16 uuid, u32* frame) {
     return true;
 }
 
+Moby* Mirror::hero_of(u16 uuid) {
+    GameClient* client = (GameClient*)Game::shared().connected_client();
+    return client != nullptr ? client->moby_for_uuid(uuid) : nullptr;
+}
+
+Moby* Mirror::attachment_of(u16 uuid, int slot) {
+    RemotePlayer* remote = find_remote(uuid);
+    if (remote == nullptr || slot < 0 || slot >= MP_MIRROR_ATTACHMENT_SLOTS) {
+        return nullptr;
+    }
+
+    Moby* moby = remote->attachment_mobys[slot];
+    if (moby == nullptr || !valid_moby(moby) || moby->p_update != MP_MOBY_UPDATE_FUNC) {
+        return nullptr;
+    }
+
+    return moby;
+}
+
 bool Mirror::is_mirrored(u16 uuid) {
     RemotePlayer* remote = find_remote(uuid);
     return remote != nullptr && remote->showing;

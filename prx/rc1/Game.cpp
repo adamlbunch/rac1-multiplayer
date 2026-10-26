@@ -23,6 +23,7 @@
 #include "rc1/multiplayer/WorldSync.h"
 #include "rc1/multiplayer/EnemySync.h"
 #include "rc1/multiplayer/EffectSync.h"
+#include "rc1/multiplayer/SoundSync.h"
 #include "rc1/multiplayer/SyncedMoby.h"
 
 // For whatever dumb reason I can't get the compiler to include
@@ -211,6 +212,7 @@ void Game::before_player_spawn() {
         WorldSync::reset();
         EnemySync::reset();
         EffectSync::reset();
+        SoundSync::reset();
 
         if (last_planet_ != current_planet) {
             last_planet_ = current_planet;

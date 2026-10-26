@@ -61,6 +61,12 @@ struct EnemySync {
     // Whether this is a copy we made of something another game's enemy spawned
     static bool is_copy(Moby* moby);
 
+    // The frame of our moby update loop, which the enemy states we send are numbered by
+    static u32 frame();
+
+    // Which of a game's frames we're showing its enemies at, false if it doesn't send us any
+    static bool shown_frame(u16 sender, u32* frame);
+
     // From the hooks on the game's functions that start a moby's animation and read the damage done to a moby
     static void on_animation_started(Moby* moby, u32 blend_frames);
     static void on_get_damage(Moby* moby);

@@ -92,6 +92,7 @@ Here is an example of how a packet with type set to MP_PACKET_MOBY_UPDATE and no
 #define MP_PACKET_ENEMY_STATE         37
 // The server passes packets from 38 to 63 on to the other players on the level as they are
 #define MP_PACKET_EFFECTS             38
+#define MP_PACKET_SOUNDS              39
 
 #define MP_PACKET_FLAG_RPC           0x1
 
@@ -589,6 +590,43 @@ typedef struct {
     u8 pad;
     u32 frame;            // The sender's player snapshot they belong with, see MPPacketPlayerState
 } MPPacketEffects;
+
+// Sounds the sender's game played, see SoundSync. Followed by `n_sounds` MPSoundEvent.
+typedef struct {
+    u16 sender;           // Filled in by the server, see MPPacketPlayerState
+    u8 n_sounds;
+    u8 pad;
+} MPPacketSounds;
+
+// Which of the game's sound functions played it: a sound of the moby's own class, of a given class, or a level sound
+#define MP_SOUND_FUNCTION_MOBY 0
+#define MP_SOUND_FUNCTION_CLASS 1
+#define MP_SOUND_FUNCTION_LEVEL 2
+#define MP_SOUND_FUNCTION_LEVEL2 3
+
+// What made it, in the sender's game
+#define MP_SOUND_TARGET_HERO 0          // Their player
+#define MP_SOUND_TARGET_ATTACHMENT 1    // What their player has on them, `slot` like MPMirrorMoby's
+#define MP_SOUND_TARGET_SYNCED 2        // Something they fired, `id` is its uuid (see SyncedMoby)
+#define MP_SOUND_TARGET_ENEMY 3         // An enemy their game runs, by `id` (UID) and `spawn` (see EnemySync)
+
+#define MP_SOUND_FLAG_STOP 0x1          // A sound it played (`event`) stopped
+#define MP_SOUND_FLAG_ENEMY_FRAME 0x2   // `frame` is an enemy sync frame (see MPPacketEnemyState), not a player snapshot
+
+typedef struct {
+    u32 frame;            // When: the player snapshot or enemy states it goes with
+    u16 event;            // The sender's number for it, so it can be stopped later
+    u8 flags;
+    u8 function;
+    u8 target;
+    u8 slot;
+    u16 id;
+    u16 spawn;
+    u16 o_class;          // Of what made it
+    u16 sound_class;      // For MP_SOUND_FUNCTION_CLASS
+    s16 index;            // Which sound
+    s32 sound_flags;      // As the game passed them
+} MPSoundEvent;
 
 #define MP_LEVEL_CONFIG_OPTION_BLOCK_MOBY_UID   1
 #define MP_LEVEL_CONFIG_OPTION_BLOCK_OCLASS     2

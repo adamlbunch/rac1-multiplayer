@@ -107,3 +107,23 @@ replaced_instr = "stdu r1, -0x50(r1)"
 [update_player]
 addr = 0x954c8
 replaced_instr = "stdu r1, -0x120(r1)"
+
+[_play_moby_sound]
+addr = 0x15d12c
+replaced_instr = "stdu r1, -0x80(r1)"
+
+[_play_class_sound]
+addr = 0x15d204
+replaced_instr = "stdu r1, -0x80(r1)"
+
+[_play_level_sound]
+addr = 0x15d2d4
+replaced_instr = "stdu r1, -0x80(r1)"
+
+[_play_level_sound2]
+addr = 0x15d380
+replaced_instr = "stdu r1, -0x80(r1)"
+
+[_stop_sound]
+addr = 0x15cdb0
+replaced_instr = "cmpwi r3, 0x0"

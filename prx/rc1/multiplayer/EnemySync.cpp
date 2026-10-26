@@ -1199,6 +1199,21 @@ bool EnemySync::is_copy(Moby* moby) {
     return enemy != nullptr && enemy->copy;
 }
 
+u32 EnemySync::frame() {
+    return frame_;
+}
+
+bool EnemySync::shown_frame(u16 sender, u32* frame) {
+    for (int i = 0; i < MAX_SENDERS; i++) {
+        if (senders_[i].active && senders_[i].uuid == sender) {
+            *frame = senders_[i].playback_frame;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool EnemySync::is_remote(Moby* moby) {
     SyncedEnemy* enemy = find_enemy(sync_index(moby));
     return enemy != nullptr && (owner_is_remote(enemy) || enemy->reacting);

@@ -81,6 +81,10 @@ struct Mirror {
     // Which of a player's frames we're showing now, false if we aren't showing them
     static bool shown_frame(u16 uuid, u32* frame);
 
+    // Our copy of a player's hero, or of what they have on them in an attachment slot. Null if there's none.
+    static Moby* hero_of(u16 uuid);
+    static Moby* attachment_of(u16 uuid, int slot);
+
     // A player's hero moby was deleted
     static void forget(u16 uuid);
 

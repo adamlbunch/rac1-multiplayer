@@ -8,6 +8,7 @@
 
 #include "EnemySync.h"
 #include "Mirror.h"
+#include "SoundSync.h"
 #include "network/GameClient.h"
 
 // The game's effect pool: 4096 records of 64 bytes, and a bit per record that's in use. The first byte of a record is
@@ -339,4 +340,5 @@ extern "C" void _c_before_player_update() {
 
 extern "C" void _c_after_player_update() {
     EffectSync::after_player_update();
+    SoundSync::end_frame();
 }

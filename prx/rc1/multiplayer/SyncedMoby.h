@@ -53,6 +53,9 @@ public:
 
     // A new level: the server forgot about all of them
     static void forget_all();
+
+    // The uuid other games know one of our synced mobys by, 0 if it isn't one or they don't know it yet
+    static u16 uuid_of(Moby* moby);
 private:
     void reset();
 };

@@ -208,6 +208,16 @@ void SyncedMoby::sweep() {
     }
 }
 
+u16 SyncedMoby::uuid_of(Moby* moby) {
+    u32 id = ((u32)moby - (u32)moby_ptr) / 0x100;
+    if (moby == nullptr || (u32)moby < (u32)moby_ptr || id >= 4096 || moby->p_update != SyncedUpdate) {
+        return 0;
+    }
+
+    SyncedMobyVars* vars = &synced_moby_vars[id];
+    return vars->status == SyncedMobyStatusActive && vars->moby == moby ? vars->uuid : 0;
+}
+
 void SyncedMoby::forget_all() {
     memset(synced_moby_vars, 0, sizeof(synced_moby_vars));
 }
