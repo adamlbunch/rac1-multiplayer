@@ -49,6 +49,13 @@ typedef void (*MobyUpdateFunction)(Moby*);
 // Players about this near to an enemy are as near, and the games' ranks settle which one runs it
 #define TIE_DISTANCE 0.5f
 
+// How often we ask the game running an enemy to hand it over, and how long an ask stands
+#define CLAIM_INTERVAL 15
+#define CLAIM_TIMEOUT 60
+
+// How many times a game sends an enemy's last state when it hands it over, in case some get lost
+#define HANDOFF_SENDS 3
+
 // Enemies no other player is this near get sent only every few frames, to keep them ours
 #define STREAM_RADIUS 150.0f
 #define FAR_SEND_INTERVAL 10
@@ -87,6 +94,17 @@ struct SyncedEnemy {
     bool hit_this_frame;
     u8 state_before;
     u8 reaction_state;
+
+    // When we last asked the game running it to hand it over to us
+    u32 claim_tick;
+
+    // Another game asked for it, and we hand it over at its next update. Then we send our last state of it a few
+    //  times, as the claimant picks up from exactly there.
+    u16 handoff_to;
+    float handoff_distance;
+    u32 handoff_tick;
+    u8 handoff_sends;
+    EnemyRecord handoff;
 };
 
 struct EnemySender {
@@ -250,12 +268,7 @@ static EnemyRecord* record_to_show(SyncedEnemy* enemy) {
     return best != nullptr ? best : oldest;
 }
 
-static void apply_state(SyncedEnemy* enemy, Moby* moby) {
-    EnemyRecord* record = record_to_show(enemy);
-    if (record == nullptr) {
-        return;
-    }
-
+static void apply_record(SyncedEnemy* enemy, Moby* moby, EnemyRecord* record) {
     MPEnemyState* state = &record->state;
 
     moby->position.x = state->position[0];
@@ -275,6 +288,13 @@ static void apply_state(SyncedEnemy* enemy, Moby* moby) {
     }
 
     MobyAnimation::apply(moby, &state->anim, &enemy->animation, true);
+}
+
+static void apply_state(SyncedEnemy* enemy, Moby* moby) {
+    EnemyRecord* record = record_to_show(enemy);
+    if (record != nullptr) {
+        apply_record(enemy, moby, record);
+    }
 }
 
 // The enemy is fighting someone in another game, so what it hit in its update here wasn't really hit
@@ -297,17 +317,8 @@ static void neutralize_damage(Moby* source) {
     }
 }
 
-static void send_state(SyncedEnemy* enemy, Moby* moby, float distance, float others_sq) {
-    // Every frame while another player could see it, otherwise now and then so the others know we run it
-    if (others_sq > STREAM_RADIUS * STREAM_RADIUS && (frame_ + enemy->index) % FAR_SEND_INTERVAL != 0) {
-        return;
-    }
-
-    if (n_outgoing_ >= MAX_SENT_ENEMIES) {
-        return;
-    }
-
-    MPEnemyState* state = &outgoing_states_[n_outgoing_];
+static void capture_state(SyncedEnemy* enemy, Moby* moby, float distance, MPEnemyState* state,
+                          MPEnemyMatrix* matrix) {
     memset(state, 0, sizeof(MPEnemyState));
 
     state->uid = moby->uid;
@@ -329,9 +340,34 @@ static void send_state(SyncedEnemy* enemy, Moby* moby, float distance, float oth
 
     if (moby->mode_bits & MODE_OWN_TRANSFORM) {
         state->flags |= MP_ENEMY_FLAG_MATRIX;
-        memcpy(outgoing_matrices_[n_outgoing_].rows, moby->transform, sizeof(outgoing_matrices_[n_outgoing_].rows));
+        memcpy(matrix->rows, moby->transform, sizeof(matrix->rows));
+    }
+}
+
+static void queue_state(MPEnemyState* state, MPEnemyMatrix* matrix) {
+    if (n_outgoing_ >= MAX_SENT_ENEMIES) {
+        return;
     }
 
+    memcpy(&outgoing_states_[n_outgoing_], state, sizeof(MPEnemyState));
+    if (state->flags & MP_ENEMY_FLAG_MATRIX) {
+        memcpy(&outgoing_matrices_[n_outgoing_], matrix, sizeof(MPEnemyMatrix));
+    }
+
+    n_outgoing_ += 1;
+}
+
+static void send_state(SyncedEnemy* enemy, Moby* moby, float distance, float others_sq) {
+    // Every frame while another player could see it, otherwise now and then so the others know we run it
+    if (others_sq > STREAM_RADIUS * STREAM_RADIUS && (frame_ + enemy->index) % FAR_SEND_INTERVAL != 0) {
+        return;
+    }
+
+    if (n_outgoing_ >= MAX_SENT_ENEMIES) {
+        return;
+    }
+
+    capture_state(enemy, moby, distance, &outgoing_states_[n_outgoing_], &outgoing_matrices_[n_outgoing_]);
     n_outgoing_ += 1;
 }
 
@@ -517,14 +553,31 @@ static void after_transform(Moby* moby) {
 
     float distance = player_distance(moby);
 
+    if (enemy != nullptr && owner_is_remote(enemy)) {
+        // We just handed it over: our last state of it again, in case it got lost
+        if (enemy->handoff_sends > 0) {
+            enemy->handoff_sends -= 1;
+            queue_state(&enemy->handoff.state, &enemy->handoff.matrix);
+        }
+
+        // Another game runs it. Once our player is clearly nearer than theirs, ask that game to hand it over, so its
+        //  AI picks up here from exactly where it left off there.
+        if (distance + CLAIM_MARGIN < enemy->owner_distance && ticks_ - enemy->claim_tick >= CLAIM_INTERVAL) {
+            enemy->claim_tick = ticks_;
+
+            MPEnemyState claim;
+            MPEnemyMatrix matrix;
+            capture_state(enemy, moby, distance, &claim, &matrix);
+            claim.flags = MP_ENEMY_FLAG_CLAIM;
+            queue_state(&claim, &matrix);
+        }
+
+        return;
+    }
+
     if (enemy == nullptr || enemy->owner != OWNER_SELF) {
-        if (enemy != nullptr && owner_is_remote(enemy)) {
-            // Another game runs it. Take it over once our player is clearly nearer than theirs.
-            if (!(distance + CLAIM_MARGIN < enemy->owner_distance)) {
-                return;
-            }
-        } else if (distance * distance > others_sq) {
-            // Nobody runs it, and another player is nearer: theirs to take
+        // Nobody runs it, and another player is nearer: theirs to take
+        if (distance * distance > others_sq) {
             return;
         }
 
@@ -539,6 +592,28 @@ static void after_transform(Moby* moby) {
         enemy->owner = OWNER_SELF;
         enemy->animation.valid = false;
     }
+
+    // Another game asked for it: this frame's state is the last one we run, the claimant picks up from there
+    if (enemy->handoff_to != 0 && ticks_ - enemy->handoff_tick < CLAIM_TIMEOUT) {
+        Logger::debug("EnemySync: handing moby %d (o_class %d) over to player %d", moby->uid, moby->o_class,
+                      enemy->handoff_to);
+
+        enemy->handoff.frame = frame_;
+        capture_state(enemy, moby, distance, &enemy->handoff.state, &enemy->handoff.matrix);
+        enemy->handoff.state.flags |= MP_ENEMY_FLAG_HANDOFF;
+        queue_state(&enemy->handoff.state, &enemy->handoff.matrix);
+        enemy->handoff_sends = HANDOFF_SENDS;
+
+        enemy->owner = enemy->handoff_to;
+        enemy->owner_distance = enemy->handoff_distance;
+        enemy->last_record_tick = ticks_;
+        enemy->handoff_to = 0;
+        memset(enemy->history, 0, sizeof(enemy->history));
+        enemy->animation.valid = false;
+        return;
+    }
+
+    enemy->handoff_to = 0;
 
     send_state(enemy, moby, distance, others_sq);
 }
@@ -697,6 +772,49 @@ static void receive_state(EnemySender* sender_info, u32 frame, MPEnemyState* sta
 
     SyncedEnemy* enemy = find_enemy(index);
 
+    if (state->flags & MP_ENEMY_FLAG_CLAIM) {
+        // Another game asks for an enemy we run
+        if (enemy != nullptr && enemy->owner == OWNER_SELF &&
+            nearer(state->distance, sender_info->rank, player_distance(moby), rank_)) {
+            enemy->handoff_to = sender;
+            enemy->handoff_distance = state->distance;
+            enemy->handoff_tick = ticks_;
+        }
+
+        return;
+    }
+
+    if (state->flags & MP_ENEMY_FLAG_HANDOFF) {
+        if (enemy != nullptr && enemy->owner == sender && enemy->claim_tick != 0 &&
+            ticks_ - enemy->claim_tick < CLAIM_TIMEOUT) {
+            // The game running it handed it to us: it picks up from exactly where that game left it
+            Logger::debug("EnemySync: took over moby %d (o_class %d) from player %d", state->uid, state->o_class,
+                          sender);
+
+            EnemyRecord record;
+            record.frame = frame;
+            memcpy(&record.state, state, sizeof(MPEnemyState));
+            if (matrix != nullptr) {
+                memcpy(&record.matrix, matrix, sizeof(MPEnemyMatrix));
+            }
+
+            apply_record(enemy, moby, &record);
+            if ((s8)state->state >= 0) {
+                moby->state = state->state;
+            }
+
+            enemy->owner = OWNER_SELF;
+            enemy->claim_tick = 0;
+            enemy->reacting = false;
+            return;
+        }
+
+        // A repeat of one we already took, or meant for someone else
+        if (enemy == nullptr || enemy->owner != sender) {
+            return;
+        }
+    }
+
     if (enemy != nullptr && enemy->owner == OWNER_SELF) {
         // We both run it: the game whose player is nearer keeps it
         if (!nearer(state->distance, sender_info->rank, player_distance(moby), rank_)) {
@@ -719,6 +837,7 @@ static void receive_state(EnemySender* sender_info, u32 frame, MPEnemyState* sta
     if (enemy->owner != sender) {
         Logger::debug("EnemySync: moby %d (o_class %d) is run by player %d", state->uid, state->o_class, sender);
         enemy->owner = sender;
+        enemy->handoff_to = 0;
         memset(enemy->history, 0, sizeof(enemy->history));
         enemy->animation.valid = false;
     }
