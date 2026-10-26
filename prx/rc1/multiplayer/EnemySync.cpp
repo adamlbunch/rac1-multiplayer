@@ -62,9 +62,10 @@ typedef void (*MobyUpdateFunction)(Moby*);
 // How many times a game sends an enemy's last state when it hands it over, in case some get lost
 #define HANDOFF_SENDS 3
 
-// Enemies no other player is this near get sent only every few frames, to keep them ours
+// Enemies no other player is this near get sent only every few frames, and other games move them smoothly from one
+//  to the next. With the frames we show them behind, the next state is there by the time it's needed.
 #define STREAM_RADIUS 150.0f
-#define FAR_SEND_INTERVAL 10
+#define FAR_SEND_INTERVAL 4
 
 #define MAX_SENT_ENEMIES 64
 
@@ -115,6 +116,9 @@ struct SyncedEnemy {
     u32 handoff_tick;
     u8 handoff_sends;
     EnemyRecord handoff;
+
+    // The state we last put it in, to step its animation on from there between states
+    u32 shown_frame;
 };
 
 struct EnemySender {
@@ -315,11 +319,66 @@ static void apply_record(SyncedEnemy* enemy, Moby* moby, EnemyRecord* record) {
     MobyAnimation::apply(moby, &state->anim, &enemy->animation, true);
 }
 
+// The first state after `frame`, or null
+static EnemyRecord* record_after(SyncedEnemy* enemy, u32 frame) {
+    EnemyRecord* next = nullptr;
+    for (int i = 0; i < ENEMY_HISTORY; i++) {
+        EnemyRecord* record = &enemy->history[i];
+        if (record->frame > frame && (next == nullptr || record->frame < next->frame)) {
+            next = record;
+        }
+    }
+
+    return next;
+}
+
+// The angle `t` of the way from `from` to `to`, turning the short way
+static float lerp_angle(float from, float to, float t) {
+    const float pi = 3.14159265f;
+
+    float delta = to - from;
+    while (delta > pi) {
+        delta -= 2 * pi;
+    }
+    while (delta < -pi) {
+        delta += 2 * pi;
+    }
+
+    return from + delta * t;
+}
+
 static void apply_state(SyncedEnemy* enemy, Moby* moby) {
     EnemyRecord* record = record_to_show(enemy);
-    if (record != nullptr) {
-        apply_record(enemy, moby, record);
+    if (record == nullptr) {
+        return;
     }
+
+    // A new state: all of it. Between states, the game steps its animation on as usual.
+    if (record->frame != enemy->shown_frame) {
+        apply_record(enemy, moby, record);
+        enemy->shown_frame = record->frame;
+    }
+
+    // Enemies far from everyone come a few frames apart: move them along to the next state
+    EnemySender* sender = find_sender(enemy->owner);
+    EnemyRecord* next = sender != nullptr ? record_after(enemy, record->frame) : nullptr;
+    if (next == nullptr || sender->playback_frame <= record->frame || (record->state.flags & MP_ENEMY_FLAG_MATRIX)) {
+        return;
+    }
+
+    float t = (float)(sender->playback_frame - record->frame) / (float)(next->frame - record->frame);
+    if (t > 1.0f) {
+        t = 1.0f;
+    }
+
+    MPEnemyState* from = &record->state;
+    MPEnemyState* to = &next->state;
+    moby->position.x = from->position[0] + (to->position[0] - from->position[0]) * t;
+    moby->position.y = from->position[1] + (to->position[1] - from->position[1]) * t;
+    moby->position.z = from->position[2] + (to->position[2] - from->position[2]) * t;
+    moby->rotation.x = lerp_angle(from->rotation[0], to->rotation[0], t);
+    moby->rotation.y = lerp_angle(from->rotation[1], to->rotation[1], t);
+    moby->rotation.z = lerp_angle(from->rotation[2], to->rotation[2], t);
 }
 
 // The enemy is fighting someone in another game, so what it hit in its update here wasn't really hit
@@ -885,6 +944,7 @@ static void receive_state(EnemySender* sender_info, u32 frame, MPEnemyState* sta
         enemy->handoff_to = 0;
         memset(enemy->history, 0, sizeof(enemy->history));
         enemy->animation.valid = false;
+        enemy->shown_frame = 0;
     }
 
     enemy->owner_distance = state->distance;
