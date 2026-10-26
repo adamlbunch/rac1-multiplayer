@@ -154,13 +154,19 @@ bool SpawnedMobys::identify(Moby* moby, u16* uid, u16* spawn) {
     }
 
     *uid = spawned->spawner_uid;
-    *spawn = spawned->spawn;
+    *spawn = spawned->spawn == REVIVED ? 0 : spawned->spawn;
     return true;
 }
 
 Moby* SpawnedMobys::find(u16 uid, u16 spawn, u16 o_class) {
     if (spawn == 0) {
-        return LevelMobys::find(uid, o_class);
+        Moby* moby = LevelMobys::find(uid, o_class);
+        if (moby != nullptr) {
+            return moby;
+        }
+
+        // Or our copy of it, if it's gone here and back in another game
+        spawn = REVIVED;
     }
 
     for (int i = 0; i < MAX_SPAWNED; i++) {

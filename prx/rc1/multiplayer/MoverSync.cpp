@@ -624,11 +624,15 @@ void MoverSync::before_update(Moby* moby, int index) {
     }
 
     // Its own state, if it's in another one here, only once it has been in ours a while and our player isn't right
-    //  next to it, and not right after a change of state, which may be newer than this
+    //  next to it, and not right after a change of state, which may be newer than this. Something that cycles through
+    //  its states by itself (blinking, steaming) never stays in one a while: it takes the state, and its timers with
+    //  it, whenever one comes, so it cycles in step.
+    bool cycling = (s32)(ticks_ - mover->cycler_until) < 0;
     bool take_state = false;
     if ((state->flags & MP_ENEMY_FLAG_STATE) && state->state != 0 && state->state < 0x80 &&
-        state->state != (u8)moby->state && mover->state_frames >= STABLE_FRAMES &&
-        ticks_ - mover->transition_tick >= TRANSITION_HOLD && ratchet_moby != nullptr && drawn(moby)) {
+        state->state != (u8)moby->state &&
+        (cycling || (mover->state_frames >= STABLE_FRAMES && ticks_ - mover->transition_tick >= TRANSITION_HOLD)) &&
+        ratchet_moby != nullptr && drawn(moby)) {
         float dx = ratchet_moby->position.x - moby->position.x;
         float dy = ratchet_moby->position.y - moby->position.y;
         float dz = ratchet_moby->position.z - moby->position.z;

@@ -30,6 +30,10 @@ struct SpawnedMobys {
     //  spawner here counts on from it, so what it spawns itself next gets the same key as in the other game
     static void adopt(Moby* moby, u16 spawner_uid, u16 spawn);
 
+    // A moby we spawned ourselves as a copy of one placed in the level that's gone here but back in another game (a
+    //  respawn there set the level up again): it's known by that one's UID and 0, like it
+    enum { REVIVED = 0xffff };
+
     // New level or respawn
     static void reset();
 };

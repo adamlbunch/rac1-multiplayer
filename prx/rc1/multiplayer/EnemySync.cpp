@@ -1058,9 +1058,11 @@ void EnemySync::on_tick(Client* client) {
     }
 }
 
-// A copy of a moby another game's enemy spawned, which our copy of that enemy didn't spawn (it doesn't run here)
-static Moby* make_copy(MPEnemyState* state) {
-    if (state->spawn == 0 || GadgetModels::loaded_class(state->o_class) == nullptr) {
+// A copy of a moby another game's enemy spawned, which our copy of that enemy didn't spawn (it doesn't run here). Or
+//  of an enemy placed in the level that we destroyed here, which is back in that game because a respawn there set the
+//  level up again: we show it from there too, so we both see the same enemies.
+static Moby* make_copy(MPEnemyState* state, bool revived) {
+    if ((state->spawn == 0) != revived || GadgetModels::loaded_class(state->o_class) == nullptr) {
         return nullptr;
     }
 
@@ -1070,7 +1072,7 @@ static Moby* make_copy(MPEnemyState* state) {
     }
 
     EnemySync::on_spawned(moby);
-    SpawnedMobys::adopt(moby, state->uid, state->spawn);
+    SpawnedMobys::adopt(moby, state->uid, revived ? SpawnedMobys::REVIVED : state->spawn);
 
     moby->position.x = state->position[0];
     moby->position.y = state->position[1];
@@ -1079,7 +1081,11 @@ static Moby* make_copy(MPEnemyState* state) {
     moby->rotation.y = state->rotation[1];
     moby->rotation.z = state->rotation[2];
     moby->scale = state->scale;
-    moby->collision = nullptr;
+
+    // What a spawned enemy fires shouldn't bump into anything here, but an enemy has to be there to be hit
+    if (!revived) {
+        moby->collision = nullptr;
+    }
 
     return moby;
 }
@@ -1089,8 +1095,14 @@ static void receive_state(EnemySender* sender_info, u32 frame, MPEnemyState* sta
 
     Moby* moby = SpawnedMobys::find(state->uid, state->spawn, state->o_class);
     bool copy = false;
-    if (moby == nullptr && (state->flags & MP_ENEMY_FLAG_SPAWNED) && !(state->flags & MP_ENEMY_FLAG_CLAIM)) {
-        moby = make_copy(state);
+    if (moby == nullptr && !(state->flags & MP_ENEMY_FLAG_CLAIM)) {
+        if (state->flags & MP_ENEMY_FLAG_SPAWNED) {
+            moby = make_copy(state, false);
+        } else if (state->spawn == 0 && LevelMobys::find_destroyed(state->uid, state->o_class) != nullptr) {
+            Logger::debug("EnemySync %u: moby %d (o_class %d) is back in player %d's game, showing it here too", ticks_,
+                          state->uid, state->o_class, sender);
+            moby = make_copy(state, true);
+        }
         copy = moby != nullptr;
     }
 
@@ -1168,8 +1180,8 @@ static void receive_state(EnemySender* sender_info, u32 frame, MPEnemyState* sta
 
     if (state->flags & MP_ENEMY_FLAG_SPAWNED) {
         enemy->spawned = true;
-        enemy->copy = enemy->copy || copy;
     }
+    enemy->copy = enemy->copy || copy;
 
     if (enemy->owner != sender) {
         Logger::debug("EnemySync %u: moby %d/%d (o_class %d) is run by player %d", ticks_, state->uid, state->spawn,

@@ -58,6 +58,16 @@ Moby* LevelMobys::find(u16 uid) {
     return moby;
 }
 
+Moby* LevelMobys::find_destroyed(u16 uid, u16 o_class) {
+    Moby* moby = lookup(uid);
+
+    if (moby == nullptr || moby->uid != uid || moby->state >= 0 || moby->o_class != (short)o_class) {
+        return nullptr;
+    }
+
+    return moby;
+}
+
 Moby* LevelMobys::find(u16 uid, u16 o_class) {
     Moby* moby = lookup(uid);
 

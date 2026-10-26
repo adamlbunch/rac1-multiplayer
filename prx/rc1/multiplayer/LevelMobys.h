@@ -38,6 +38,9 @@ struct LevelMobys {
 
     // The level's moby with this UID if it's alive, whatever its class
     static Moby* find(u16 uid);
+
+    // The level's moby with this UID and class if it was destroyed here (it's still in the table, but not alive)
+    static Moby* find_destroyed(u16 uid, u16 o_class);
 };
 
 #endif //RAC1_MULTIPLAYER_LEVELMOBYS_H
