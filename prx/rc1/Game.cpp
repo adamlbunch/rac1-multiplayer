@@ -23,6 +23,7 @@
 #include "rc1/multiplayer/WorldSync.h"
 #include "rc1/multiplayer/EnemySync.h"
 #include "rc1/multiplayer/EffectSync.h"
+#include "rc1/multiplayer/SyncedMoby.h"
 
 // For whatever dumb reason I can't get the compiler to include
 //  .cpp files under /lib/, so it's defined here.
@@ -203,6 +204,7 @@ void Game::before_player_spawn() {
 
             ((GameClient*)client())->clear_hybrid_mobys();
             ((GameClient*)client())->moby_delete_all();
+            SyncedMoby::forget_all();
         }
     }
 }

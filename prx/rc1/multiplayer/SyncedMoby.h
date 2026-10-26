@@ -46,6 +46,13 @@ public:
         u8 transform_bone = 0
     );
     static int moby_create_callback(void* data, size_t len, void* extra);
+
+    // Tells the server about our synced mobys that went away without their own update seeing it: deleted by some
+    //  other part of the game, or gone before the server gave them an ID. Other games kept their copies otherwise.
+    static void sweep();
+
+    // A new level: the server forgot about all of them
+    static void forget_all();
 private:
     void reset();
 };

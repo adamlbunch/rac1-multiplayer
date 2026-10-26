@@ -17,6 +17,7 @@
 #include "../WorldSync.h"
 #include "../EnemySync.h"
 #include "../EffectSync.h"
+#include "../SyncedMoby.h"
 #include "../GadgetModels.h"
 
 GameClient::GameClient(char *ip, int port) : Client(ip, port) {
@@ -972,6 +973,7 @@ void GameClient::on_tick() {
         WorldSync::on_tick(Game::shared().connected_client());
         EnemySync::on_tick(Game::shared().connected_client());
         EffectSync::on_tick();
+        SyncedMoby::sweep();
     }
 
     {

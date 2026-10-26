@@ -177,3 +177,37 @@ int SyncedMoby::moby_create_callback(void* data, size_t len, void* extra) {
 void SyncedMoby::synced_update(SyncedMoby *moby) {
     moby->update();
 }
+
+void SyncedMoby::sweep() {
+    Client* client = Game::shared().connected_client();
+    if (client == nullptr || game_state != PlayerControl) {
+        return;
+    }
+
+    for (int id = 0; id < 4096; id++) {
+        SyncedMobyVars* vars = &synced_moby_vars[id];
+        if (vars->status != SyncedMobyStatusActive || vars->uuid == 0) {
+            continue;
+        }
+
+        // From before we reconnected: the server doesn't know it anymore
+        if (vars->connection_start_time != client->connection_start_time_) {
+            memset(vars, 0, sizeof(SyncedMobyVars));
+            continue;
+        }
+
+        Moby* moby = vars->moby;
+        if (moby != nullptr && moby->state >= 0 && moby->p_update == SyncedUpdate) {
+            continue;
+        }
+
+        Logger::debug("Synced moby %d went away, sending delete", vars->uuid);
+        client->send_ack(Packet::make_moby_delete_packet(vars->uuid));
+        memset(vars, 0, sizeof(SyncedMobyVars));
+        vars->status = SyncedMobyStatusReady;
+    }
+}
+
+void SyncedMoby::forget_all() {
+    memset(synced_moby_vars, 0, sizeof(synced_moby_vars));
+}
