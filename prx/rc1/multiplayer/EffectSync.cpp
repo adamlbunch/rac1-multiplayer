@@ -30,6 +30,12 @@
 // Effects one moby makes in an update that we may have to undo
 #define MAX_MOBY_EFFECTS 32
 
+#define MAX_MUTED 32
+
+// Bolts dropped by enemies, which are always each game's own
+#define BOLT_O_CLASS 13
+#define BIG_BOLT_O_CLASS 14
+
 // Effects of a player we aren't showing, or whose frame is this far off what we show, are made right away
 #define EFFECT_FAR_FRAMES 30
 
@@ -63,6 +69,9 @@ static bool player_updating_ = false;
 // What the moby being updated made so far
 static u8* moby_effects_[MAX_MOBY_EFFECTS];
 static int n_moby_effects_ = 0;
+
+static Moby* muted_[MAX_MUTED];
+static u16 muted_classes_[MAX_MUTED];
 
 static QueuedEffect queue_[MAX_QUEUED];
 static u32 ticks_ = 0;
@@ -133,6 +142,39 @@ void EffectSync::on_allocated(u8* effect) {
 
 void EffectSync::before_moby_update() {
     n_moby_effects_ = 0;
+}
+
+void EffectSync::after_moby_update(Moby* moby) {
+    for (int i = 0; i < MAX_MUTED; i++) {
+        if (muted_[i] != moby) {
+            continue;
+        }
+
+        if (moby->o_class == (short)muted_classes_[i]) {
+            discard_moby_effects();
+        } else {
+            muted_[i] = nullptr;
+        }
+        return;
+    }
+}
+
+void EffectSync::mute(Moby* moby) {
+    if (moby == nullptr || moby->o_class == BOLT_O_CLASS || moby->o_class == BIG_BOLT_O_CLASS) {
+        return;
+    }
+
+    int slot = 0;
+    for (int i = 0; i < MAX_MUTED; i++) {
+        if (muted_[i] == nullptr || muted_[i] == moby || muted_[i]->state < 0 ||
+            muted_[i]->o_class != (short)muted_classes_[i]) {
+            slot = i;
+            break;
+        }
+    }
+
+    muted_[slot] = moby;
+    muted_classes_[slot] = moby->o_class;
 }
 
 void EffectSync::discard_moby_effects() {
@@ -282,6 +324,7 @@ void EffectSync::on_tick() {
 
 void EffectSync::reset() {
     memset(spawned_, 0, sizeof(spawned_));
+    memset(muted_, 0, sizeof(muted_));
     memset(queue_, 0, sizeof(queue_));
     n_captured_ = 0;
 }

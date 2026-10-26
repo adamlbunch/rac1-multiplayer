@@ -780,6 +780,7 @@ bool EnemySync::update_mobys() {
             ((MobyUpdateFunction)moby->p_update)(moby);
         }
 
+        EffectSync::after_moby_update(moby);
         after_update(moby);
 
         if (!(moby->mode_bits & MODE_NO_TRANSFORM)) {
@@ -1148,4 +1149,8 @@ extern "C" void _c_on_moby_spawned(Moby* moby) {
     SpawnedMobys::on_spawned(moby, updating_);
     EnemySync::on_spawned(moby);
     EffectSync::on_spawned(moby);
+
+    if (updating_enemy_ != nullptr && updating_enemy_->reacting) {
+        EffectSync::mute(moby);
+    }
 }

@@ -32,7 +32,12 @@ struct EffectSync {
 
     // Around the update of each moby in the update loop. A moby can have the effects it made in its update undone.
     static void before_moby_update();
+    static void after_moby_update(Moby* moby);
     static void discard_moby_effects();
+
+    // An enemy another game runs spawned this reacting to a hit here (an explosion, debris...). Its effects come from
+    //  that game too, so the ones it makes here are undone.
+    static void mute(Moby* moby);
 
     static void receive(MPPacketEffects* packet, size_t len);
 
