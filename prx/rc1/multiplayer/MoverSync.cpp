@@ -225,10 +225,11 @@ static bool points_into_level(u32 value) {
     return gameplay != 0 && main_heap != nullptr && value >= gameplay && value < main_heap[1];
 }
 
-// A value that's an address in this game's memory: it may mean the same in every game, but its value is different.
-//  Below the game's data there's only its code, the same in every game, so values there are just numbers (flags).
+// A value we never copy from another game or over ours: an address in this game's memory, or what might be one. That
+//  includes values like 0x10000 that are flags of the game's own bookkeeping (a moby's place in a list of the level's
+//  collision: taking another game's flags there made one link itself twice, and the game loop forever).
 static bool looks_like_pointer(u32 value) {
-    return (value >= 0x700000 && value < 0x1800000) || points_into_level(value);
+    return (value >= 0x10000 && value < 0x1800000) || points_into_level(value);
 }
 
 // How other games know an address in its variables that's about our player: our player's moby, where they are or
@@ -587,26 +588,31 @@ void MoverSync::before_update(Moby* moby, int index) {
         return;
     }
 
-    // About the sender's player, who we have no copy of: left as it is
-    if (!apply_words(mover, moby, mover->sender, mover->words, mover->n_words)) {
-        return;
-    }
-
-    // Where it is, its animation and its variables. Its own state only once it has been in its own a while and our
-    //  player isn't right next to it, and not right after a change of state, which may be newer than this.
-    apply_place(moby, state);
-
+    // Its own state, if it's in another one here, only once it has been in ours a while and our player isn't right
+    //  next to it, and not right after a change of state, which may be newer than this
+    bool take_state = false;
     if ((state->flags & MP_ENEMY_FLAG_STATE) && state->state != 0 && state->state < 0x80 &&
         state->state != (u8)moby->state && mover->state_frames >= STABLE_FRAMES &&
         ticks_ - mover->transition_tick >= TRANSITION_HOLD && ratchet_moby != nullptr && drawn(moby)) {
         float dx = ratchet_moby->position.x - moby->position.x;
         float dy = ratchet_moby->position.y - moby->position.y;
         float dz = ratchet_moby->position.z - moby->position.z;
-        if (dx * dx + dy * dy + dz * dz > INTERACT_RADIUS * INTERACT_RADIUS) {
-            moby->state = state->state;
-            mover->local_state = moby->state;
-            mover->state_frames = 0;
-        }
+        take_state = dx * dx + dy * dy + dz * dz > INTERACT_RADIUS * INTERACT_RADIUS;
+    }
+
+    // Its variables only along with the state they go with: those of another state would tell its code here what
+    //  isn't so (that it's on a list it isn't on, say). Those about the sender's player need our copy of them.
+    bool same_state = state->state == (u8)moby->state || !(state->flags & MP_ENEMY_FLAG_STATE);
+    if ((same_state || take_state) && !apply_words(mover, moby, mover->sender, mover->words, mover->n_words)) {
+        return;
+    }
+
+    apply_place(moby, state);
+
+    if (take_state) {
+        moby->state = state->state;
+        mover->local_state = moby->state;
+        mover->state_frames = 0;
     }
 
     MobyAnimation::apply(moby, &state->anim, &mover->animation, false);

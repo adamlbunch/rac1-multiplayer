@@ -90,6 +90,22 @@ static u32 redestroy_until_ = 0;
 // The next of those to tell a player who just arrived, -1 if there's nothing to tell
 #define RESENDS_PER_TICK 4
 static int resend_next_ = -1;
+
+static void note_destroyed(const MobyKey* key) {
+    if (key->spawn != 0) {
+        return;
+    }
+
+    for (int i = 0; i < n_destroyed_; i++) {
+        if (destroyed_[i].uid == key->uid && destroyed_[i].o_class == key->o_class) {
+            return;
+        }
+    }
+
+    if (n_destroyed_ < MAX_DESTROYED) {
+        destroyed_[n_destroyed_++] = *key;
+    }
+}
 static RemoteHit remote_hits_[MAX_REMOTE_HITS];
 
 static u32 ticks_ = 0;
@@ -235,22 +251,6 @@ static void send_record(Client* client, u8* record) {
         note_destroyed(&target_key);
     } else {
         remember_hit(target, &target_key);
-    }
-}
-
-static void note_destroyed(const MobyKey* key) {
-    if (key->spawn != 0) {
-        return;
-    }
-
-    for (int i = 0; i < n_destroyed_; i++) {
-        if (destroyed_[i].uid == key->uid && destroyed_[i].o_class == key->o_class) {
-            return;
-        }
-    }
-
-    if (n_destroyed_ < MAX_DESTROYED) {
-        destroyed_[n_destroyed_++] = *key;
     }
 }
 
