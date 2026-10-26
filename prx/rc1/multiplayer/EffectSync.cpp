@@ -27,6 +27,9 @@
 #define MAX_CAPTURED 128
 #define MAX_QUEUED 512
 
+// Effects one moby makes in an update that we may have to undo
+#define MAX_MOBY_EFFECTS 32
+
 // Effects of a player we aren't showing, or whose frame is this far off what we show, are made right away
 #define EFFECT_FAR_FRAMES 30
 
@@ -34,6 +37,8 @@
 #define EFFECT_MAX_WAIT 60
 
 extern "C" u8* _c_allocate_effect(u32 type);
+
+SHK_FUNCTION_DEFINE_STATIC_1(0x11e6ec, void, free_effect, u8*, effect);
 
 struct QueuedEffect {
     bool used;
@@ -55,12 +60,21 @@ static int n_captured_ = 0;
 // Our player, and with them what they hold, are being updated
 static bool player_updating_ = false;
 
+// What the moby being updated made so far
+static u8* moby_effects_[MAX_MOBY_EFFECTS];
+static int n_moby_effects_ = 0;
+
 static QueuedEffect queue_[MAX_QUEUED];
 static u32 ticks_ = 0;
 
+// Ours to send: our player, what they hold or fired, the enemies we run for everyone and what they fired
 static bool is_ours(Moby* moby) {
     if (moby == nullptr) {
         return false;
+    }
+
+    if (EnemySync::is_owned(moby)) {
+        return true;
     }
 
     for (int i = 0; i < 1 + GADGET_MOBYS; i++) {
@@ -104,12 +118,31 @@ void EffectSync::begin_frame() {
 }
 
 void EffectSync::on_allocated(u8* effect) {
-    if (effect == nullptr || n_captured_ >= MAX_CAPTURED || game_state != PlayerControl ||
-        !(player_updating_ || is_ours(EnemySync::updating()))) {
+    if (effect == nullptr || game_state != PlayerControl) {
         return;
     }
 
-    captured_[n_captured_++] = effect;
+    if (!player_updating_ && EnemySync::updating() != nullptr && n_moby_effects_ < MAX_MOBY_EFFECTS) {
+        moby_effects_[n_moby_effects_++] = effect;
+    }
+
+    if (n_captured_ < MAX_CAPTURED && (player_updating_ || is_ours(EnemySync::updating()))) {
+        captured_[n_captured_++] = effect;
+    }
+}
+
+void EffectSync::before_moby_update() {
+    n_moby_effects_ = 0;
+}
+
+void EffectSync::discard_moby_effects() {
+    for (int i = 0; i < n_moby_effects_; i++) {
+        if (in_use(moby_effects_[i])) {
+            free_effect(moby_effects_[i]);
+        }
+    }
+
+    n_moby_effects_ = 0;
 }
 
 void EffectSync::on_spawned(Moby* moby) {

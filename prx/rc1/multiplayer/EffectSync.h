@@ -5,7 +5,8 @@
 //
 // So when our player, the weapons they hold or the things they fired make effects, we send the effect records. The
 //  other games make the same records, at the frame of that player's replayed pose they belong with (see Mirror), and
-//  the game animates them just like ours.
+//  the game animates them just like ours. Same for the enemies our game runs for everyone (see EnemySync) and what
+//  they fire: other games only show what those make here, not what their own copy makes reacting to a hit.
 //
 
 #ifndef RAC1_MULTIPLAYER_EFFECTSYNC_H
@@ -28,6 +29,10 @@ struct EffectSync {
     // From the hooks on the game's functions that make effect records and spawn mobys
     static void on_allocated(u8* effect);
     static void on_spawned(Moby* moby);
+
+    // Around the update of each moby in the update loop. A moby can have the effects it made in its update undone.
+    static void before_moby_update();
+    static void discard_moby_effects();
 
     static void receive(MPPacketEffects* packet, size_t len);
 

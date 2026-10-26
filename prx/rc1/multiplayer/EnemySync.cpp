@@ -551,6 +551,7 @@ static int sync_index(Moby* moby) {
 static bool before_update(Moby* moby) {
     updating_ = moby;
     updating_enemy_ = nullptr;
+    EffectSync::before_moby_update();
     updating_index_ = sync_index(moby);
 
     if (updating_index_ < 0) {
@@ -614,6 +615,9 @@ static void after_update(Moby* moby) {
 
     if (enemy->reacting) {
         neutralize_damage(moby);
+
+        // What it shows reacting comes from the game running it, see EffectSync
+        EffectSync::discard_moby_effects();
 
         if (enemy->hit_this_frame) {
             enemy->hit_this_frame = false;
