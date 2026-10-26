@@ -193,10 +193,11 @@ struct EnemySyncDebugInfo {
     u32* ticks;
     u32* off;
     u16* unsynced_classes;
+    u8* traits;             // Per moby placed in the level, by its place in the table
 };
 
 EnemySyncDebugInfo enemy_sync_debug_info_ = {
-    "ESYNC01", enemies_, sizeof(SyncedEnemy), MAX_ENEMIES, senders_, &ticks_, &sync_off_, unsynced_classes_
+    "ESYNC01", enemies_, sizeof(SyncedEnemy), MAX_ENEMIES, senders_, &ticks_, &sync_off_, unsynced_classes_, traits_
 };
 
 static bool plausible_moby(Moby* moby) {

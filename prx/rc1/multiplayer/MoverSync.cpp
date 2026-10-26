@@ -169,6 +169,20 @@ static u32 transition_ticks_[MAX_OUTGOING_TRANSITIONS];
 static int n_outgoing_transitions_ = 0;
 static u32 ticks_ = 0;
 
+// Where the test tools that read a running game's memory find our state (see rac1-coop's tools)
+struct MoverSyncDebugInfo {
+    char magic[8];
+    Mover* movers;
+    u32 mover_size;
+    u32 max_movers;
+    u8* slots;
+    u32* ticks;
+};
+
+MoverSyncDebugInfo mover_sync_debug_info_ = {
+    "MSYNC01", movers_, sizeof(Mover), MAX_MOVERS, slots_, &ticks_
+};
+
 static float square_root(float x) {
     if (x <= 0.0f) {
         return 0.0f;
