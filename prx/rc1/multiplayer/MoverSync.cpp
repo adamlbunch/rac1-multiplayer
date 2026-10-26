@@ -81,6 +81,10 @@
 #define BOLT_O_CLASS 13
 #define BIG_BOLT_O_CLASS 14
 
+// Gold bolts are shared by the mod's own messages (see GoldBolt). Their collected state flies them into the camera of
+//  the game whose player took them: put in it in another game, they crashed there (Batalia).
+#define GOLD_BOLT_O_CLASS 1134
+
 // Our player's memory: a moby whose variables point here (or at our player's moby) is doing something with our
 //  player. Where they are and which way they face are known in other games, as our copy of them there.
 #define PLAYER_DATA_START 0x969ce0
@@ -287,7 +291,7 @@ static bool involves_player(Moby* moby, u16 vars_size) {
 }
 
 static bool syncable_class(Moby* moby) {
-    return moby->o_class != BOLT_O_CLASS && moby->o_class != BIG_BOLT_O_CLASS;
+    return moby->o_class != BOLT_O_CLASS && moby->o_class != BIG_BOLT_O_CLASS && moby->o_class != GOLD_BOLT_O_CLASS;
 }
 
 // Drawn, unlike the level's invisible triggers and managers, which have no model at all
