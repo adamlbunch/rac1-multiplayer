@@ -74,7 +74,9 @@
 #define MAX_OUTGOING_TRANSITIONS 16
 
 // A change of state goes out this many frames after it happened, unless our game left normal play meanwhile: then it
-//  was a character starting to talk, a cutscene starting, and those are about our player only
+//  was a character starting to talk, a cutscene starting, a vendor opening, and those are about our player only. The
+//  states sent now and then don't carry it before then either: Eudora's Fred, in his talking state in the other game,
+//  started talking to the player there too.
 #define TRANSITION_DELAY 10
 
 // Bolts are each player's own
@@ -138,6 +140,10 @@ struct Mover {
     // Whether we said it isn't set up for a state another game put it in (said once)
     bool told_not_set_up;
 
+    // Our game left normal play right after it changed state (see TRANSITION_DELAY): it's someone who talks to our
+    //  player, or something else about them. Never sent.
+    bool talks;
+
     // Its variables when its own update was done, to see which something else changes before it runs again: what
     //  another moby keeps there (a leader its group follows, a list it's on, the traffic it's part of) is about that
     //  moby in this game, and never taken from another game or sent
@@ -185,6 +191,7 @@ static OutgoingMover outgoing_[MAX_OUTGOING];
 static int n_outgoing_ = 0;
 static OutgoingMover outgoing_transitions_[MAX_OUTGOING_TRANSITIONS];
 static u32 transition_ticks_[MAX_OUTGOING_TRANSITIONS];
+static int transition_movers_[MAX_OUTGOING_TRANSITIONS];    // Their movers_ slots
 static int n_outgoing_transitions_ = 0;
 static u32 ticks_ = 0;
 
@@ -788,6 +795,7 @@ static void queue_transition(Mover* mover, Moby* moby, float distance, s8 state_
     out->head.moby.flags |= MP_ENEMY_FLAG_STATE | MP_ENEMY_FLAG_TRANSITION;
     out->head.moby.pad[0] = (u8)state_before;
     transition_ticks_[n_outgoing_transitions_] = ticks_;
+    transition_movers_[n_outgoing_transitions_] = mover - movers_;
     n_outgoing_transitions_ += 1;
 }
 
@@ -814,6 +822,9 @@ void MoverSync::after_update(Moby* moby, int index, float distance, bool moves, 
     }
 
     Mover* mover = find_mover(index);
+    if (mover != nullptr && mover->talks) {
+        return;
+    }
 
     // Its own change of state, wherever the players are
     if (changes_state && state_before >= 0 && moby->state != state_before && drawn(moby)) {
@@ -838,6 +849,12 @@ void MoverSync::after_update(Moby* moby, int index, float distance, bool moves, 
     }
 
     if (sent_by_other(mover, distance)) {
+        return;
+    }
+
+    // Not while a change of its own state waits to go out (see TRANSITION_DELAY), unless it cycles
+    bool cycling = (s32)(ticks_ - mover->cycler_until) < 0;
+    if (changes_state && !cycling && ticks_ - mover->transition_tick < TRANSITION_DELAY) {
         return;
     }
 
@@ -913,13 +930,28 @@ int MoverSync::remote_indexes(u16* out, int max) {
 }
 
 void MoverSync::send(u32 frame) {
+    // Out of normal play, what moves is our player's cutscene, and what changed state just before started it
+    if (game_state != PlayerControl) {
+        if (game_state == Movie || game_state == CutScene || game_state == Gadgetron || game_state == CinematicMaybe) {
+            for (int i = 0; i < n_outgoing_transitions_; i++) {
+                Mover* mover = &movers_[transition_movers_[i]];
+                if (mover->used && mover->uid == outgoing_transitions_[i].head.moby.uid) {
+                    mover->talks = true;
+                }
+            }
+        }
+        n_outgoing_ = 0;
+        n_outgoing_transitions_ = 0;
+        return;
+    }
+
     Client* client = Game::shared().connected_client();
     if (client != nullptr) {
         send_movers(client, outgoing_, n_outgoing_, frame, false);
     }
     n_outgoing_ = 0;
 
-    if (client == nullptr || game_state != PlayerControl) {
+    if (client == nullptr) {
         n_outgoing_transitions_ = 0;
         return;
     }
@@ -939,6 +971,7 @@ void MoverSync::send(u32 frame) {
     for (int i = n_due; i < n_outgoing_transitions_; i++) {
         outgoing_transitions_[i - n_due] = outgoing_transitions_[i];
         transition_ticks_[i - n_due] = transition_ticks_[i];
+        transition_movers_[i - n_due] = transition_movers_[i];
     }
     n_outgoing_transitions_ -= n_due;
 }
