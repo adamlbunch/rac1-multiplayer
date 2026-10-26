@@ -113,6 +113,10 @@ static bool describe(Moby* moby, MPSoundEvent* event) {
     return false;
 }
 
+bool SoundSync::plays_for(u32 channel, Moby* moby) {
+    return channel < SOUND_CHANNELS && CHANNEL_STATE(channel) != 0 && CHANNEL_MOBY(channel) == moby;
+}
+
 bool SoundSync::should_play(Moby* moby) {
     if (moby == nullptr || game_state != PlayerControl || Game::shared().connected_client() == nullptr) {
         return true;

@@ -10,6 +10,7 @@
 #include "LevelMobys.h"
 #include "Mirror.h"
 #include "MobyAnimation.h"
+#include "SoundSync.h"
 #include "SpawnedMobys.h"
 #include "network/GameClient.h"
 
@@ -76,6 +77,9 @@ struct Mover {
     u16 vars_size;
     u8 baseline[VARS_MAX];
     u32 changed[VARS_MAX / 4 / 32];
+
+    // Its variables that hold one of our sound channels (the one of a sound it loops): never sent or taken on
+    u32 channels[VARS_MAX / 4 / 32];
 
     // The game sending it, how far its player was from it, and when we last heard
     u16 sender;
@@ -194,6 +198,22 @@ static u16 vars_size_of(Moby* moby) {
     return (u16)((next - vars) & ~3);
 }
 
+// Notes which of its variables hold the channel of a sound it plays here
+static void note_channels(Mover* mover, Moby* moby) {
+    u8* vars = (u8*)moby->vars;
+    for (u16 offset = 0; vars != nullptr && offset + 4 <= mover->vars_size; offset += 4) {
+        u32 value;
+        memcpy(&value, vars + offset, 4);
+        if (SoundSync::plays_for(value, moby)) {
+            mover->channels[offset / 4 / 32] |= 1u << ((offset / 4) % 32);
+        }
+    }
+}
+
+static bool holds_channel(Mover* mover, u16 offset) {
+    return (mover->channels[offset / 4 / 32] & (1u << ((offset / 4) % 32))) != 0;
+}
+
 static Mover* find_mover(int index) {
     if (index < 0 || index >= MAX_LEVEL_MOBYS || slots_[index] == 0) {
         return nullptr;
@@ -271,6 +291,8 @@ void MoverSync::before_update(Moby* moby, int index) {
         return;
     }
 
+    note_channels(mover, moby);
+
     if (mover->settled < SETTLE_FRAMES) {
         mover->settled += 1;
         return;
@@ -332,7 +354,7 @@ void MoverSync::before_update(Moby* moby, int index) {
 
     for (int i = 0; i < mover->n_words; i++) {
         MPMoverWord* word = &mover->words[i];
-        if (word->offset + 4 > mover->vars_size) {
+        if (word->offset + 4 > mover->vars_size || holds_channel(mover, word->offset)) {
             continue;
         }
 
@@ -371,9 +393,14 @@ static void queue_state(Mover* mover, Moby* moby, float distance, bool changes_s
     mover->sent_state = moby->state;
 
     // The variables that changed since we first saw it, and keep changing: where along its path it is, its timers...
+    note_channels(mover, moby);
     u16 n_words = 0;
     u8* vars = (u8*)moby->vars;
     for (u16 offset = 0; vars != nullptr && offset + 4 <= mover->vars_size; offset += 4) {
+        if (holds_channel(mover, offset)) {
+            continue;
+        }
+
         u32 value, baseline;
         memcpy(&value, vars + offset, 4);
         memcpy(&baseline, mover->baseline + offset, 4);
@@ -397,7 +424,7 @@ static void queue_state(Mover* mover, Moby* moby, float distance, bool changes_s
     for (int i = 0; vars != nullptr && i < ROTATING_WORDS && n_vars > 0 && n_words < MAX_WORDS; i++) {
         u16 word = mover->next_word % n_vars;
         mover->next_word = (mover->next_word + 1) % n_vars;
-        if (mover->changed[word / 32] & (1u << (word % 32))) {
+        if ((mover->changed[word / 32] & (1u << (word % 32))) || holds_channel(mover, word * 4)) {
             continue;
         }
 
