@@ -869,14 +869,13 @@ bool GameClient::update(MPPacketHeader *header, void *packet_data) {
 
                 MPPacketOpenDataStream* open_data_stream = (MPPacketOpenDataStream*)packet_data;
 
-                DataClientConnectionInfo connection_info = {
-                    &sockaddr_, open_data_stream->key
-                };
+                data_connection_info_.sockaddr = &sockaddr_;
+                data_connection_info_.key = open_data_stream->key;
 
                 sys_ppu_thread_create(
                     &data_thread_id_,
                     (void(*)(uint64_t))&DataClient::start_data_client,
-                    (uint64_t)&connection_info,
+                    (uint64_t)&data_connection_info_,
                     1000,
                     0x1000,
                     SYS_PPU_THREAD_CREATE_JOINABLE,

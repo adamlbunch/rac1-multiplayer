@@ -74,6 +74,8 @@ private:
     long ticks_;
 
     sys_ppu_thread_t data_thread_id_;
+    // What the data stream's thread connects with. The thread reads it after it starts, so it can't be on the stack.
+    DataClientConnectionInfo data_connection_info_;
 
     bool connection_complete_;
 
