@@ -30,6 +30,29 @@ Commands are for Windows (PowerShell), which is what has been tested. Linux and 
 | Private network between the two PCs | Tailscale | `tailscale ping <other PC's 100.x IP>` answers |
 | Co-op server (host only) | e.g. `$HOME\Emulators\Lawrence` | log says `Started Lawrence on 0.0.0.0:2407` |
 
+## Fast path: the setup scripts
+
+Two scripts in [`setup/`](setup) do most of the steps below and check their results. Run them, then use the numbered
+steps for whatever they report as missing (system software, the game, Tailscale) and to check things.
+
+```powershell
+# Both players: finds RPCS3 (-InstallRPCS3 downloads it if there's none), checks the system software and the game,
+#  installs the latest mod, turns networking on, and saves the name and server address
+Invoke-WebRequest https://raw.githubusercontent.com/adamlbunch/rac1-multiplayer/main/setup/install-coop.ps1 -OutFile "$env:TEMP\install-coop.ps1"
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\install-coop.ps1" -RPCS3 "C:\path\to\RPCS3" -Username "TheirName" -Server "100.x.y.z"
+
+# Host only: builds the server, writes its settings and launchers and a Desktop shortcut
+Invoke-WebRequest https://raw.githubusercontent.com/adamlbunch/rac1-multiplayer/main/setup/setup-server.ps1 -OutFile "$env:TEMP\setup-server.ps1"
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\setup-server.ps1" -RPCS3 "C:\path\to\RPCS3"
+```
+
+- `install-coop.ps1` opens RPCS3 to install the package, and RPCS3 asks "Do you want to install this package?". The
+  user clicks Install, then closes RPCS3 when it's done (on a first start RPCS3 shows a welcome window first, which
+  they close). Pass `-Username` and `-Server` (the host uses `127.0.0.1`) so it doesn't stop to ask.
+- `setup-server.ps1` needs Git and a .NET SDK 8 or newer. It asks before installing them, or `-InstallTools` installs
+  them without asking (only with the user's OK). `-AddFirewallRule` lets the server through Windows Firewall, which
+  needs an administrator PowerShell. Run it again to update the server; settings and the saved campaign are kept.
+
 ## 1. RPCS3 (both)
 
 1. Install the Visual C++ runtime RPCS3 needs, and 7-Zip to unpack it:
@@ -116,7 +139,8 @@ needed.
 
 ## 8. The co-op server (host only)
 
-1. Tools to build it: `winget install --id Git.Git -e` and `winget install --id Microsoft.DotNet.SDK.8 -e`.
+1. Tools to build it: Git (`winget install --id Git.Git -e`) and a .NET SDK 8 or newer (`dotnet --list-sdks`; if
+   there's none, `winget install --id Microsoft.DotNet.SDK.8 -e`).
 2. Build:
    ```powershell
    $SERVER = "$HOME\Emulators\Lawrence"
@@ -217,9 +241,9 @@ The game adds a `userid` line itself. If a `settings.conf` is already there, cha
 
 ## Updating
 
-- Mod: repeat step 4 on both PCs. Both players must run the same release.
-- Server: in the clone, `git pull`, then run the `dotnet publish` command from step 8 again with the server stopped.
-  `settings.toml`, `saves` and the launchers stay.
+- Mod: run `install-coop.ps1` again, or repeat step 4, on both PCs. Both players must run the same release.
+- Server: run `setup-server.ps1` again with the server stopped. By hand: `git pull` in the clone, then the
+  `dotnet publish` command from step 8. `settings.toml`, `saves` and the launchers stay.
 
 ## Troubleshooting
 

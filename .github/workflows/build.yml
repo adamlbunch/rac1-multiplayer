@@ -1,11 +1,15 @@
-name: Co-op build
+name: Build
 
-# Builds the mod from the coop-fixes branch and keeps the .pkg as a workflow artifact. Unlike release.yml this doesn't
-#  publish a release.
+# Builds the mod on every push to main and keeps the .pkg as a workflow artifact. Pushing a version tag (v1.2.3)
+#  also publishes a release with it as Ratchet-Coop-Mod-sync.pkg, which becomes the latest download.
 on:
   push:
-    branches: [ coop-fixes ]
+    branches: [ main ]
+    tags: [ 'v*' ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -55,3 +59,12 @@ jobs:
             build/BDUPS3-BORD00001_00-0000000000000000.pkg
             build/PS3_GAME/USRDIR
             prx/build/bin/mod.map
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          Copy-Item build/BDUPS3-BORD00001_00-0000000000000000.pkg Ratchet-Coop-Mod-sync.pkg
+          gh release create $env:GITHUB_REF_NAME Ratchet-Coop-Mod-sync.pkg --title "Ratchet & Clank Co-op $env:GITHUB_REF_NAME" --generate-notes --latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh

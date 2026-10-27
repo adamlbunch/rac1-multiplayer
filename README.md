@@ -1,36 +1,60 @@
-# Multiplayer for Ratchet & Clank
+# Ratchet & Clank Co-op
 
 ![Ratchet Multiplayer logo](https://raw.githubusercontent.com/bordplate/rac1-multiplayer/main/app/LOGO.png)  
 Logo courtesy of Discord user \_triippy\_
 
-This is a multiplayer mod for the PS3 HD release of the original 2002 Ratchet & Clank. It runs on console and emulator thanks
-to [PS3-CKit](https://github.com/tge-was-taken/ps3-ckit) by TGE. 
+Play the whole campaign of the original 2002 Ratchet & Clank (the PS3 HD release) together with a friend online, in
+the RPCS3 emulator. Weapons, gadgets, bolts, planets, gold bolts and skill points are shared, and each of you sees the
+other player, their weapons, the enemies and the world exactly as they are in the other's game. Progress saves on the
+host's PC.
 
-## This fork: two-player co-op
+**[⬇ Download the latest version](https://github.com/adamlbunch/rac1-multiplayer/releases/latest/download/Ratchet-Coop-Mod-sync.pkg)**
+· [All releases](https://github.com/adamlbunch/rac1-multiplayer/releases)
+· [Setup guide for AI agents](AGENTS.md)
 
-This fork (branch `coop-fixes`) turns the mod into online co-op for two players. You play the campaign together, and
-each game shows the other player, their weapons and the enemies exactly as they are in the other's game. Both players
-install this build, and the host also runs the co-op server from
-[adamlbunch/Lawrence](https://github.com/adamlbunch/Lawrence/tree/coop-fixes) (branch `coop-fixes`).
+## Quick start
 
-- **Download:** [Ratchet-Coop-Mod-sync.pkg](https://github.com/adamlbunch/rac1-multiplayer/releases/latest/download/Ratchet-Coop-Mod-sync.pkg)
-  (the latest [release](https://github.com/adamlbunch/rac1-multiplayer/releases)). Install it in RPCS3 with
-  **File → Install Packages/Raps/Edats**.
-- **Full setup** (RPCS3, firmware, the game, the mod, Tailscale, the server, playing): [AGENTS.md](AGENTS.md). It's
-  written so an AI agent can set everything up for you end to end, and it works as a step-by-step guide for people too.
+**You each need:** a Windows PC with [RPCS3](https://rpcs3.net) and the PS3 system software (RPCS3: File → Install
+Firmware, with `PS3UPDAT.PUP` from [Sony](https://www.playstation.com/support/hardware/ps3/system-software/)), and
+your own copy of the PS3 Ratchet & Clank: the European PSN version (NPEA00385), the US PSN version (NPUA80643) or the
+European Trilogy disc (BCES01503). The PS2 version doesn't work.
 
-The official mod and server are [bordplate/rac1-multiplayer](https://github.com/bordplate/rac1-multiplayer) and
-[bordplate/Lawrence](https://github.com/bordplate/Lawrence). The rest of this README is theirs.
+1. **Both players** paste this into PowerShell:
+   ```powershell
+   irm https://raw.githubusercontent.com/adamlbunch/rac1-multiplayer/main/setup/install-coop.ps1 -OutFile $env:TEMP\install-coop.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\install-coop.ps1
+   ```
+   It finds RPCS3 (or downloads it), checks the system software and the game, and installs the latest version of the
+   mod (click **Install** when RPCS3 asks). It also turns RPCS3's networking on and saves your name and the server
+   address. To do it by hand instead: download the `.pkg` above, install it with **File → Install Packages/Raps/Edats**,
+   and set **Configuration → Network → Network Status** to **Connected**.
+2. **The host** also pastes this:
+   ```powershell
+   irm https://raw.githubusercontent.com/adamlbunch/rac1-multiplayer/main/setup/setup-server.ps1 -OutFile $env:TEMP\setup-server.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\setup-server.ps1
+   ```
+   It builds the co-op server ([adamlbunch/Lawrence](https://github.com/adamlbunch/Lawrence/tree/coop-fixes)) and puts
+   a **Ratchet Co-op** shortcut on the Desktop that starts the server and the game.
+3. **Connect the two PCs** with [Tailscale](https://tailscale.com) (free): both install it and sign in, and the host
+   shares their PC with the guest from the [admin console](https://login.tailscale.com/admin/machines). The guest uses
+   the host's Tailscale IP (`tailscale ip -4` on the host, starts with `100.`).
+4. **Play.** The host double-clicks **Ratchet Co-op**, presses Start, connects to `127.0.0.1` (**Circle → Direct IP**)
+   and presses **Circle** to make a lobby. The guest starts "Ratchet Multiplayer" in RPCS3, connects to the host's
+   Tailscale IP, picks the lobby with **Cross** and presses **Circle**. The host presses **Circle** to start.
 
-We also have a [community over on Discord](https://discord.gg/5DXGkhb2zZ) for discussing the multiplayer and 
-[Randomizer](https://github.com/bordplate/rac1-randomizer) mods. 
+Run the same commands again to update. You both need the same version.
 
-## Installation
-Go to the releases and download the .pkg file. Install on either console or emulator the way you install .pkg files normally. 
-The game will show up on the XMB/Home screen on your PS3 or emulator. 
+**Setting up with an AI agent?** Give it this repository's [AGENTS.md](AGENTS.md): every step, with checks, so it can
+set everything up for you end to end.
 
-You must have a legal copy of Ratchet & Clank already installed to start the mod: the European PSN version
-(NPEA00385), the US PSN version (NPUA80643) or the European Trilogy disc (BCES01503). 
+## About this project
+
+It started as a fork of [bordplate/rac1-multiplayer](https://github.com/bordplate/rac1-multiplayer), a multiplayer mod
+that runs on console and emulator thanks to [PS3-CKit](https://github.com/tge-was-taken/ps3-ckit) by TGE, and its
+server [bordplate/Lawrence](https://github.com/bordplate/Lawrence). The official mod connects to this project's server
+but doesn't sync the game the same way, so both players need this version. The original project as it was when we
+forked it is on the `upstream-main` branch. The rest of this README describes how the mod is built, from the original.
+
+Every push to `main` builds the mod with GitHub Actions (the `.pkg` is kept with the run). Pushing a version tag
+(`git tag v1.2.3 && git push origin v1.2.3`) also publishes it as a release, which becomes the download above.
 
 # Structure
 ## Launcher `/app/`
@@ -64,8 +88,7 @@ The config_*.mk file defines the game specific addresses used to build the loade
 
 # Building
 I strongly suggest you have a look at how the building works in practice by looking at the 
-[Github Action workflow](https://github.com/bordplate/rac1-multiplayer/blob/main/.github/workflows/release.yml) in this
-repository.  
+[Github Action workflow](.github/workflows/build.yml) in this repository.  
 
 To build this project on Windows 10, you need:
 - chocolatey
