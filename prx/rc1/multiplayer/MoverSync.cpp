@@ -61,8 +61,10 @@
 #define STABLE_FRAMES 30
 #define INTERACT_RADIUS 8.0f
 
-// Things that change their state send it right away when it changes (unless they cycle), and every so often otherwise
+// Things that change their state send it right away when it changes, and every so often otherwise. Things that cycle
+//  through their states by themselves, only while another player is close, and not more often than this.
 #define STATE_SEND_INTERVAL 60
+#define CYCLER_SEND_GAP 10
 
 // A thing that changes its state by itself more often than this sends no more changes for a while: it's blinking
 //  or cycling, and the states sent now and then keep it in step
@@ -175,6 +177,8 @@ struct Mover {
     MPMoverWord words[MAX_WORDS];
 
     MirrorAnimation animation;
+
+    u32 sent_tick;          // When we last sent its state
 };
 
 struct MoverSender {
@@ -802,6 +806,7 @@ static void queue_state(Mover* mover, Moby* moby, float distance, bool changes_s
         out->head.moby.flags |= MP_ENEMY_FLAG_STATE;
     }
     mover->sent_state = moby->state;
+    mover->sent_tick = ticks_;
     n_outgoing_ += 1;
 }
 
@@ -902,9 +907,11 @@ void MoverSync::after_update(Moby* moby, int index, float distance, bool moves, 
     int interval = others_sq < CLOSE_RADIUS * CLOSE_RADIUS ? SEND_INTERVAL_NEAR :
                    others_sq < MID_RADIUS * MID_RADIUS ? SEND_INTERVAL_MID :
                    others_sq < NEAR_RADIUS * NEAR_RADIUS ? SEND_INTERVAL_FAR : SEND_INTERVAL_AWAY;
+    bool close = others_sq < CLOSE_RADIUS * CLOSE_RADIUS;
+    bool new_state = moby->state != mover->sent_state &&
+                     (!cycling || (close && ticks_ - mover->sent_tick >= CYCLER_SEND_GAP));
     bool due = (frame + index) % interval == 0 ||
-               (changes_state && ((moby->state != mover->sent_state && !cycling) ||
-                                  (frame + index) % STATE_SEND_INTERVAL == 0));
+               (changes_state && (new_state || (frame + index) % STATE_SEND_INTERVAL == 0));
     if (due && !involves_player(moby, mover->vars_size)) {
         queue_state(mover, moby, distance, changes_state);
     }
