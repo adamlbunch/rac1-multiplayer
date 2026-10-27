@@ -234,6 +234,10 @@ void EffectSync::after_player_update() {
     end_frame();
 }
 
+bool EffectSync::player_updating() {
+    return player_updating_;
+}
+
 // Puts in which moby the record's moby addresses are, as other games know it. False if it holds the address of one
 //  they can't know.
 static bool encode_references(u8* data) {
@@ -257,6 +261,12 @@ static bool encode_references(u8* data) {
             if (ours_[1 + i] == moby && moby != nullptr) {
                 reference = (REFERENCE_ATTACHMENT << 24) | (into << 16) | i;
             }
+        }
+
+        // Something our weapons spawned, like a missile with its trail: other games have it in a spawned slot
+        int spawned_slot = Mirror::spawned_slot(moby);
+        if (reference == 0 && spawned_slot >= 0) {
+            reference = (REFERENCE_ATTACHMENT << 24) | (into << 16) | spawned_slot;
         }
 
         u16 uid, spawn;

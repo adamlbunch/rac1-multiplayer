@@ -27,6 +27,7 @@ struct EffectSync {
     static void end_frame();
     static void before_player_update();
     static void after_player_update();
+    static bool player_updating();
 
     // From the hooks on the game's functions that make effect records and spawn mobys
     static void on_allocated(u8* effect);

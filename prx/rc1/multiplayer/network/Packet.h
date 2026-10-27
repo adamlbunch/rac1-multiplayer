@@ -440,6 +440,9 @@ typedef struct {
 //  packet is split into several with the same `frame`.
 #define MP_MIRROR_SLOT_HERO          0xff
 #define MP_MIRROR_ATTACHMENT_SLOTS   14  // 7 gadget slots on the player, 2 mobys each
+// Slots from here on are for mobys the player's weapons spawned (bombs, missiles, their explosions...), see Mirror
+#define MP_MIRROR_SLOT_SPAWNED       0x40
+#define MP_MIRROR_MAX_SPAWNED        32
 #define MP_MIRROR_MAX_MANIPULATORS   7  // Most that fit with the hero in a packet's own buffer
 #define MP_MIRROR_MAX_EXTRA_MANIPULATORS 7
 #define MP_MIRROR_MAX_LAYERS         3
@@ -477,7 +480,7 @@ typedef struct {
 #define MP_MIRROR_LAYER_FRAME1_FROM_SOURCE 2
 
 typedef struct {
-    u8 slot;              // MP_MIRROR_SLOT_HERO or an attachment slot (gadget slot * 2 + index)
+    u8 slot;              // MP_MIRROR_SLOT_HERO, an attachment slot (gadget slot * 2 + index) or a spawned one
     u8 enabled;
     u16 o_class;
     u16 mode_bits;
@@ -499,7 +502,7 @@ typedef struct {
     u8 anim_flags;
     u8 blend_frames;      // How many frames the animation blends in over when it starts
     u8 pose;              // MP_MIRROR_POSE_*. Games before it send 0.
-    u8 pad;
+    u8 n_spawned;         // In the hero's: how many spawned mobys the frame has, in any of its parts. Else 0.
 } MPMirrorMoby;
 
 // How the sender's game poses an attachment: from its own animation, or (gloves, things worn on the head, boots) from

@@ -93,6 +93,13 @@ static bool describe(Moby* moby, MPSoundEvent* event) {
         }
     }
 
+    int spawned_slot = Mirror::spawned_slot(moby);
+    if (spawned_slot >= 0) {
+        event->target = MP_SOUND_TARGET_ATTACHMENT;
+        event->slot = spawned_slot;
+        return true;
+    }
+
     u16 uuid = SyncedMoby::uuid_of(moby);
     if (uuid != 0) {
         event->target = MP_SOUND_TARGET_SYNCED;

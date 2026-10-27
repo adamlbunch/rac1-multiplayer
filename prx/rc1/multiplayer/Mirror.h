@@ -37,6 +37,10 @@ struct MirrorSnapshot {
     bool has_extras;    // That part arrived
     MPMirrorManipulator extra_manipulators[MP_MIRROR_MAX_EXTRA_MANIPULATORS];
     MPMirrorLayer layers[MP_MIRROR_MAX_LAYERS];
+
+    // Mobys their weapons spawned, by spawned slot. The hero's state says how many the frame has.
+    u32 spawned_received;
+    MPMirrorMoby spawned[MP_MIRROR_MAX_SPAWNED];
 };
 
 struct RemotePlayer {
@@ -65,6 +69,13 @@ struct RemotePlayer {
     MobyClass* attachment_models[MP_MIRROR_ATTACHMENT_SLOTS];  // What each copy must be drawn with, see GadgetModels
     MPMirrorMoby attachment_state[MP_MIRROR_ATTACHMENT_SLOTS];
     MirrorAnimation attachment_animation[MP_MIRROR_ATTACHMENT_SLOTS];
+
+    // Our copies of what their weapons spawned, and the tick each was last in a frame we showed
+    Moby* spawned_mobys[MP_MIRROR_MAX_SPAWNED];
+    MobyClass* spawned_models[MP_MIRROR_MAX_SPAWNED];
+    MPMirrorMoby spawned_state[MP_MIRROR_MAX_SPAWNED];
+    MirrorAnimation spawned_animation[MP_MIRROR_MAX_SPAWNED];
+    u32 spawned_seen[MP_MIRROR_MAX_SPAWNED];
 };
 
 struct Mirror {
@@ -94,9 +105,17 @@ struct Mirror {
     // Which of a player's frames we're showing now, false if we aren't showing them
     static bool shown_frame(u16 uuid, u32* frame);
 
-    // Our copy of a player's hero, or of what they have on them in an attachment slot. Null if there's none.
+    // Our copy of a player's hero, or of what they have on them in an attachment slot or spawned in a spawned slot.
+    //  Null if there's none.
     static Moby* hero_of(u16 uuid);
     static Moby* attachment_of(u16 uuid, int slot);
+
+    // From the hook on the game's moby spawning: a moby spawned while our player updated, or by one of the mobys
+    //  that did, is sent with our snapshots (bombs, missiles, their explosions...)
+    static void on_spawned(Moby* moby, bool by_player, Moby* spawner);
+
+    // The spawned slot one of those has in our snapshots, -1 if it isn't one
+    static int spawned_slot(Moby* moby);
 
     // A player's hero moby was deleted
     static void forget(u16 uuid);

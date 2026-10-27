@@ -8,6 +8,7 @@
 
 #include "MPMoby.h"
 #include "GadgetModels.h"
+#include "SyncedMoby.h"
 #include "WorldSync.h"
 #include "network/GameClient.h"
 
@@ -34,6 +35,20 @@ static Manipulator manipulators_[MIRROR_MAX_PLAYERS][MP_MIRROR_MAX_MANIPULATORS 
 //  loop's walk through the moby list
 #define MIRROR_MAX_ORPHANS 16
 static Moby* orphans_[MIRROR_MAX_ORPHANS];
+
+// Mobys our player's weapons spawned (bombs, missiles, decoys, their explosions...) and what those spawned in turn,
+//  sent with our snapshots like what we hold, so other games show them exactly and only as long as we have them.
+//  Slots are handed out going round, so one isn't reused right after its moby went away.
+static Moby* spawned_[MP_MIRROR_MAX_SPAWNED];
+static u16 spawned_classes_[MP_MIRROR_MAX_SPAWNED];
+static int next_spawned_ = 0;
+
+// A copy of something spawned that hasn't been in a frame we showed for this many ticks is gone
+#define SPAWNED_TIMEOUT 30
+
+// Bolts are each game's own
+#define BOLT_O_CLASS 13
+#define BIG_BOLT_O_CLASS 14
 
 // Some things on the player aren't posed from their own animation: every frame the game poses them from the player's
 //  joints into a pose buffer of its own and points the moby's frame pointers at it. Their own animation alone shows
@@ -114,6 +129,17 @@ static bool valid_moby(Moby* moby) {
 
     return address >= 0x10000 && address < 0xC0000000 && (address & 0xf) == 0 &&
            moby->state >= 0 && moby->p_class != nullptr;
+}
+
+// In one of our player's gadget slots
+static bool is_attachment(Moby* moby) {
+    for (int slot = 0; slot < MP_MIRROR_ATTACHMENT_SLOTS; slot++) {
+        if (*(Moby**)(GADGET_SLOTS + (slot / 2) * GADGET_SLOT_STRIDE + (slot % 2) * 4) == moby) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 static u8 joint_pose_kind(Moby* moby) {
@@ -471,6 +497,28 @@ void Mirror::send_snapshot(Client* client) {
         state.attachments |= 1 << slot;
     }
 
+    MPMirrorMoby spawned[MP_MIRROR_MAX_SPAWNED];
+    u8 n_spawned = 0;
+    for (int i = 0; i < MP_MIRROR_MAX_SPAWNED; i++) {
+        Moby* moby = spawned_[i];
+        if (moby == nullptr) {
+            continue;
+        }
+
+        if (!valid_moby(moby) || moby->o_class != (short)spawned_classes_[i]) {
+            spawned_[i] = nullptr;
+            continue;
+        }
+
+        // Ones other parts of the mod copy already
+        if (is_attachment(moby) || moby->p_update == SyncedUpdate) {
+            continue;
+        }
+
+        capture(&spawned[n_spawned++], moby, MP_MIRROR_SLOT_SPAWNED + i);
+    }
+    hero.n_spawned = n_spawned;
+
     send_part(client, &state, &hero, 1, manipulators, n_manipulators);
 
     if (state.n_extra_manipulators > 0 || state.n_layers > 0) {
@@ -482,6 +530,44 @@ void Mirror::send_snapshot(Client* client) {
         u8 count = n_attachments - sent > 4 ? 4 : n_attachments - sent;
         send_part(client, &state, &attachments[sent], count, nullptr, 0);
     }
+
+    for (u8 sent = 0; sent < n_spawned; sent += 4) {
+        u8 count = n_spawned - sent > 4 ? 4 : n_spawned - sent;
+        send_part(client, &state, &spawned[sent], count, nullptr, 0);
+    }
+}
+
+void Mirror::on_spawned(Moby* moby, bool by_player, Moby* spawner) {
+    if (moby == nullptr || game_state != PlayerControl || moby->o_class == HERO_O_CLASS ||
+        moby->o_class == BOLT_O_CLASS || moby->o_class == BIG_BOLT_O_CLASS ||
+        (!by_player && spawned_slot(spawner) < 0)) {
+        return;
+    }
+
+    for (int n = 0; n < MP_MIRROR_MAX_SPAWNED; n++) {
+        int i = (next_spawned_ + n) % MP_MIRROR_MAX_SPAWNED;
+        Moby* other = spawned_[i];
+        if (other == nullptr || other == moby || !valid_moby(other) || other->o_class != (short)spawned_classes_[i]) {
+            spawned_[i] = moby;
+            spawned_classes_[i] = moby->o_class;
+            next_spawned_ = (i + 1) % MP_MIRROR_MAX_SPAWNED;
+            return;
+        }
+    }
+}
+
+int Mirror::spawned_slot(Moby* moby) {
+    if (moby == nullptr) {
+        return -1;
+    }
+
+    for (int i = 0; i < MP_MIRROR_MAX_SPAWNED; i++) {
+        if (spawned_[i] == moby && moby->state >= 0 && moby->o_class == (short)spawned_classes_[i]) {
+            return MP_MIRROR_SLOT_SPAWNED + i;
+        }
+    }
+
+    return -1;
 }
 
 static RemotePlayer* find_remote(u16 uuid) {
@@ -506,6 +592,18 @@ static void remove_attachment(RemotePlayer* remote, int slot, bool mobys_exist) 
     remote->attachment_animation[slot].valid = false;
 }
 
+static void remove_spawned(RemotePlayer* remote, int index, bool mobys_exist) {
+    Moby* moby = remote->spawned_mobys[index];
+
+    if (moby != nullptr && mobys_exist && valid_moby(moby) && moby->p_update == MP_MOBY_UPDATE_FUNC) {
+        delete_moby(moby);
+    }
+
+    remote->spawned_mobys[index] = nullptr;
+    remote->spawned_models[index] = nullptr;
+    remote->spawned_animation[index].valid = false;
+}
+
 // The model to draw a copy of another player's attachment with: our own load of it for weapons and gadgets, which the
 //  game only has loaded while our player holds them, otherwise whatever the game has loaded for its class. Null if we
 //  can't draw it.
@@ -525,12 +623,22 @@ void Mirror::drop_gadget_models() {
                 remove_attachment(remote, slot, true);
             }
         }
+
+        for (int index = 0; index < MP_MIRROR_MAX_SPAWNED; index++) {
+            if (remote->spawned_models[index] != nullptr && GadgetModels::owns(remote->spawned_models[index])) {
+                remove_spawned(remote, index, true);
+            }
+        }
     }
 }
 
 static void deactivate(RemotePlayer* remote, bool mobys_exist) {
     for (int slot = 0; slot < MP_MIRROR_ATTACHMENT_SLOTS; slot++) {
         remove_attachment(remote, slot, mobys_exist);
+    }
+
+    for (int index = 0; index < MP_MIRROR_MAX_SPAWNED; index++) {
+        remove_spawned(remote, index, mobys_exist);
     }
 
     if (mobys_exist && (remote->hero_manipulated || remote->hero_layered)) {
@@ -611,6 +719,7 @@ void Mirror::receive(MPPacketPlayerState* packet, size_t len) {
         snapshot->received = 0;
         snapshot->n_manipulators = 0;
         snapshot->has_extras = false;
+        snapshot->spawned_received = 0;
     }
 
     snapshot->attachments = packet->attachments;
@@ -649,6 +758,10 @@ void Mirror::receive(MPPacketPlayerState* packet, size_t len) {
         } else if (moby->slot < MP_MIRROR_ATTACHMENT_SLOTS) {
             memcpy(&snapshot->attachment[moby->slot], moby, sizeof(MPMirrorMoby));
             snapshot->received |= 1 << moby->slot;
+        } else if (moby->slot >= MP_MIRROR_SLOT_SPAWNED && moby->slot < MP_MIRROR_SLOT_SPAWNED + MP_MIRROR_MAX_SPAWNED) {
+            u8 index = moby->slot - MP_MIRROR_SLOT_SPAWNED;
+            memcpy(&snapshot->spawned[index], moby, sizeof(MPMirrorMoby));
+            snapshot->spawned_received |= 1u << index;
         }
     }
 
@@ -778,6 +891,47 @@ void Mirror::on_tick() {
                 remote->attachment_animation[slot].valid = false;
             }
         }
+
+        // What their weapons spawned. Once all of the frame's parts with them are here, ones it doesn't have are gone.
+        u32 received = current->spawned_received;
+        u8 n_received = 0;
+        for (u32 bits = received; bits != 0; bits &= bits - 1) {
+            n_received += 1;
+        }
+        bool complete = n_received >= current->hero.n_spawned;
+
+        for (int index = 0; index < MP_MIRROR_MAX_SPAWNED; index++) {
+            if (!(received & (1u << index))) {
+                if (remote->spawned_mobys[index] != nullptr &&
+                    (complete || ticks_ - remote->spawned_seen[index] > SPAWNED_TIMEOUT)) {
+                    remove_spawned(remote, index, true);
+                }
+                continue;
+            }
+
+            MPMirrorMoby* state = &current->spawned[index];
+            memcpy(&remote->spawned_state[index], state, sizeof(MPMirrorMoby));
+            remote->spawned_seen[index] = ticks_;
+
+            MobyClass* model = attachment_model(remote, state->o_class);
+
+            Moby* moby = remote->spawned_mobys[index];
+            if (moby != nullptr && (!valid_moby(moby) || moby->o_class != state->o_class || moby->p_class != model)) {
+                remove_spawned(remote, index, true);
+                moby = nullptr;
+            }
+
+            if (moby == nullptr && model != nullptr) {
+                moby = GadgetModels::spawn_with_class(state->o_class, model,
+                                                      MP_MOBY_FLAG_MIRROR | MP_MOBY_FLAG_NO_COLLISION);
+                if (moby != nullptr) {
+                    moby->collision = nullptr;
+                    remote->spawned_mobys[index] = moby;
+                    remote->spawned_models[index] = model;
+                    remote->spawned_animation[index].valid = false;
+                }
+            }
+        }
     }
 }
 
@@ -895,6 +1049,19 @@ void Mirror::update_attachment(Moby* moby) {
             }
             return;
         }
+
+        for (int index = 0; index < MP_MIRROR_MAX_SPAWNED; index++) {
+            if (remote->spawned_mobys[index] != moby) {
+                continue;
+            }
+
+            MPMirrorMoby* state = &remote->spawned_state[index];
+            apply_transform(moby, state);
+            GadgetModels::touch(moby->p_class);
+            moby->mode_bits = (state->mode_bits & ~(0x2 | 0x4)) | 0x100;
+            apply_animation(moby, state, &remote->spawned_animation[index], false);
+            return;
+        }
     }
 
     // Its player is gone
@@ -950,11 +1117,12 @@ Moby* Mirror::hero_of(u16 uuid) {
 
 Moby* Mirror::attachment_of(u16 uuid, int slot) {
     RemotePlayer* remote = find_remote(uuid);
-    if (remote == nullptr || slot < 0 || slot >= MP_MIRROR_ATTACHMENT_SLOTS) {
+    bool spawned = slot >= MP_MIRROR_SLOT_SPAWNED && slot < MP_MIRROR_SLOT_SPAWNED + MP_MIRROR_MAX_SPAWNED;
+    if (remote == nullptr || slot < 0 || (slot >= MP_MIRROR_ATTACHMENT_SLOTS && !spawned)) {
         return nullptr;
     }
 
-    Moby* moby = remote->attachment_mobys[slot];
+    Moby* moby = spawned ? remote->spawned_mobys[slot - MP_MIRROR_SLOT_SPAWNED] : remote->attachment_mobys[slot];
     if (moby == nullptr || !valid_moby(moby) || moby->p_update != MP_MOBY_UPDATE_FUNC) {
         return nullptr;
     }
@@ -982,4 +1150,5 @@ void Mirror::reset() {
     }
 
     memset(orphans_, 0, sizeof(orphans_));
+    memset(spawned_, 0, sizeof(spawned_));
 }

@@ -1450,6 +1450,7 @@ extern "C" void _c_on_moby_spawned(Moby* moby) {
     SpawnedMobys::on_spawned(moby, updating_);
     EnemySync::on_spawned(moby);
     EffectSync::on_spawned(moby);
+    Mirror::on_spawned(moby, EffectSync::player_updating(), updating_);
 
     if (updating_enemy_ != nullptr && updating_enemy_->reacting) {
         EffectSync::mute(moby);

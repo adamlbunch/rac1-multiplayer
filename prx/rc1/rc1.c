@@ -338,16 +338,10 @@ Moby* spawn_moby_hook(u16 o_class) {
     _c_on_moby_spawned(moby);
 
     switch(moby->o_class) {
-        // Weapons and projectiles
-        case 121: // Bomb glove bomb
-        case 0xcb: // Decoy
-        case 0xac: // Visibomb missile
-        case 0x1df: // Drone
-        case 0x99: // Gold devastator missile
+        // What our weapons fire (bombs, decoys, missiles, drones, mines, doom bots) and their explosions used to be
+        //  synced here by position alone, and lingered in other games when they went away quickly. They're part of
+        //  the player's snapshot now, see Mirror.
         case 0x71a: // Sandmouse
-        case 0x4a: // Mine
-        case 0xba: // Doom bot
-        case 457:  // RYNO missile
         case 270: // Chicken
         case 428: // Feather (from killing chickens)
             SyncedMoby::make_synced_moby(moby)->activate();
