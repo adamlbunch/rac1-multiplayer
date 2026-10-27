@@ -346,6 +346,7 @@ static void capture(MPMirrorMoby* out, Moby* moby, u8 slot) {
     out->anim_flags = m[0x70];
 
     out->pose = joint_pose_kind(moby);
+    out->state = moby->state;
 }
 
 void Mirror::on_hero_animation_started(u32 blend_frames) {
@@ -517,7 +518,7 @@ void Mirror::send_snapshot(Client* client) {
 
         capture(&spawned[n_spawned++], moby, MP_MIRROR_SLOT_SPAWNED + i);
     }
-    hero.n_spawned = n_spawned;
+    hero.state = n_spawned;
 
     send_part(client, &state, &hero, 1, manipulators, n_manipulators);
 
@@ -898,7 +899,7 @@ void Mirror::on_tick() {
         for (u32 bits = received; bits != 0; bits &= bits - 1) {
             n_received += 1;
         }
-        bool complete = n_received >= current->hero.n_spawned;
+        bool complete = n_received >= current->hero.state;
 
         for (int index = 0; index < MP_MIRROR_MAX_SPAWNED; index++) {
             if (!(received & (1u << index))) {
@@ -977,6 +978,13 @@ static void apply_transform(Moby* moby, MPMirrorMoby* state) {
     moby->mode_bits |= 0x100;
 }
 
+// Not the hero's, whose state field carries something else (see MPMirrorMoby)
+static void apply_state(Moby* moby, MPMirrorMoby* state) {
+    if (state->state < 0x80) {
+        moby->state = state->state;
+    }
+}
+
 bool Mirror::apply_hero(Moby* moby, u16 uuid) {
     RemotePlayer* remote = find_remote(uuid);
     if (remote == nullptr || !remote->showing || game_state != PlayerControl) {
@@ -1037,6 +1045,7 @@ void Mirror::update_attachment(Moby* moby) {
 
             MPMirrorMoby* state = &remote->attachment_state[slot];
             apply_transform(moby, state);
+            apply_state(moby, state);
             GadgetModels::touch(moby->p_class);
 
             // Keep it in the update loop (0x2 takes it out) and let the game build its transform from our matrix
@@ -1057,6 +1066,7 @@ void Mirror::update_attachment(Moby* moby) {
 
             MPMirrorMoby* state = &remote->spawned_state[index];
             apply_transform(moby, state);
+            apply_state(moby, state);
             GadgetModels::touch(moby->p_class);
             moby->mode_bits = (state->mode_bits & ~(0x2 | 0x4)) | 0x100;
             apply_animation(moby, state, &remote->spawned_animation[index], false);

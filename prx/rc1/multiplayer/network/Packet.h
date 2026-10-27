@@ -502,7 +502,9 @@ typedef struct {
     u8 anim_flags;
     u8 blend_frames;      // How many frames the animation blends in over when it starts
     u8 pose;              // MP_MIRROR_POSE_*. Games before it send 0.
-    u8 n_spawned;         // In the hero's: how many spawned mobys the frame has, in any of its parts. Else 0.
+    // Its state, which some mobys are drawn by (an explosion's fireball). The hero's carries how many spawned mobys
+    //  the frame has instead, in any of its parts. Games before it send 0.
+    u8 state;
 } MPMirrorMoby;
 
 // How the sender's game poses an attachment: from its own animation, or (gloves, things worn on the head, boots) from
