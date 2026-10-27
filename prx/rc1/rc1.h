@@ -79,6 +79,9 @@ SHK_FUNCTION_DEFINE_STATIC_4(0x7100c, void, _draw_text_opt, TextOpt*, text_opt, 
 SHK_FUNCTION_DEFINE_STATIC_2(0xef810, void, init_moby, Moby*, moby, u16, o_class);
 SHK_FUNCTION_DEFINE_STATIC_2(0x65490, void, world_pos_to_screen_pos, Vec4*, out_screen_pos, Vec4*, world_pos);
 SHK_FUNCTION_DEFINE_STATIC_5(0x57820, int, coll_line, Vec4*, position1, Vec4*, position2, int, flags, Moby*, moby, Vec4*, unk_vec);
+// Poses a model from a player's joints (the ones listed, ending in -1, then `blank_joints` left unposed) into `pose`,
+//  which the moby drawn with it then points its frame pointers at. Null `from` is our own player.
+SHK_FUNCTION_DEFINE_STATIC_5(0x91090, void, pose_from_player_joints, const s32*, joints, void*, pose, MobyClass*, model, s32, blank_joints, Moby*, from);
 
 void draw_text_opt(TextOpt* text_opt, Color color, char* text, ssize_t len, float text_size);
 

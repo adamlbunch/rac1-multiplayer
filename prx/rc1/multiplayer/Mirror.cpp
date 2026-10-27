@@ -34,6 +34,38 @@ static Manipulator manipulators_[MIRROR_MAX_PLAYERS][MP_MIRROR_MAX_MANIPULATORS]
 #define MIRROR_MAX_ORPHANS 16
 static Moby* orphans_[MIRROR_MAX_ORPHANS];
 
+// Some things on the player aren't posed from their own animation: every frame the game poses them from the player's
+//  joints into a pose buffer of its own and points the moby's frame pointers at it. Their own animation alone shows
+//  the bare model (the Bomb Glove as just its bomb), so copies are posed the same way, from our copy of the player.
+struct JointPose {
+    u32 game_pose;      // The game's pose buffer for this kind
+    const s32* joints;  // The player's joints it takes, ending in -1
+};
+
+#define JOINT_POSE_KINDS 4
+#define JOINT_POSE_SIZE 0x200
+
+static const JointPose joint_poses_[JOINT_POSE_KINDS] = {
+    {0xa1b880, (const s32*)0x721afc},   // MP_MIRROR_POSE_GLOVE: Bomb, Mine, Doom and Decoy Glove
+    {0xa1ba80, (const s32*)0x721b88},   // MP_MIRROR_POSE_HEAD: Sonic Summoner, O2 Mask, Pilot's Helmet
+    {0xa1bc80, (const s32*)0x721b98},   // MP_MIRROR_POSE_BOOT: Magneboots and Grindboots, one buffer per boot
+    {0xa1bd80, (const s32*)0x721bb0},   // MP_MIRROR_POSE_OTHER_BOOT
+};
+
+// One thing on the head takes more of the head's joints, and 6 left unposed
+#define HEAD_WITH_MORE_JOINTS 0x1b1
+#define HEAD_MORE_JOINTS ((const s32*)0x721b44)
+#define HEAD_MORE_BLANK_JOINTS 6
+
+// While posing boots the game sets these two groups of 3 values of the player's to 1
+#define BOOT_POSE_VALUES ((float*)0x721eb0)
+#define BOOT_POSE_VALUES2 ((float*)0x721f60)
+
+// The player's joint lists are the hero's, Ratchet's, own
+#define HERO_O_CLASS 0
+
+static u8 joint_pose_buffers_[MIRROR_MAX_PLAYERS][JOINT_POSE_KINDS][JOINT_POSE_SIZE] __attribute__((aligned(16)));
+
 static u32 frame_ = 0;
 static u32 ticks_ = 0;
 static u8 hero_animation_restarts_ = 0;
@@ -44,6 +76,67 @@ static bool valid_moby(Moby* moby) {
 
     return address >= 0x10000 && address < 0xC0000000 && (address & 0xf) == 0 &&
            moby->state >= 0 && moby->p_class != nullptr;
+}
+
+static u8 joint_pose_kind(Moby* moby) {
+    u32 frame0 = (u32)moby->field41_0x68;
+    if (frame0 != (u32)moby->field42_0x6c) {
+        return MP_MIRROR_POSE_ANIMATION;
+    }
+
+    for (u8 i = 0; i < JOINT_POSE_KINDS; i++) {
+        if (joint_poses_[i].game_pose == frame0) {
+            return i + 1;
+        }
+    }
+
+    return MP_MIRROR_POSE_ANIMATION;
+}
+
+// Poses a copy from our copy of its player's joints, the way the game poses the real one. False if it can't be.
+static bool pose_from_joints(Moby* moby, u8 kind, Moby* hero, u8* pose) {
+    if (kind == MP_MIRROR_POSE_ANIMATION || kind > JOINT_POSE_KINDS || hero == nullptr || !valid_moby(hero) ||
+        hero->o_class != HERO_O_CLASS || hero->field41_0x68 == nullptr || hero->field42_0x6c == nullptr) {
+        return false;
+    }
+
+    const s32* joints = joint_poses_[kind - 1].joints;
+    s32 blank_joints = 0;
+    if (kind == MP_MIRROR_POSE_HEAD && moby->o_class == HEAD_WITH_MORE_JOINTS) {
+        joints = HEAD_MORE_JOINTS;
+        blank_joints = HEAD_MORE_BLANK_JOINTS;
+    }
+
+    bool boot = kind == MP_MIRROR_POSE_BOOT || kind == MP_MIRROR_POSE_OTHER_BOOT;
+    float saved[6];
+    if (boot) {
+        for (int i = 0; i < 3; i++) {
+            saved[i] = BOOT_POSE_VALUES[i];
+            saved[3 + i] = BOOT_POSE_VALUES2[i];
+            BOOT_POSE_VALUES[i] = 1.0f;
+            BOOT_POSE_VALUES2[i] = 1.0f;
+        }
+    }
+
+    pose_from_player_joints(joints, pose, moby->p_class, blank_joints, hero);
+
+    if (boot) {
+        for (int i = 0; i < 3; i++) {
+            BOOT_POSE_VALUES[i] = saved[i];
+            BOOT_POSE_VALUES2[i] = saved[3 + i];
+        }
+    }
+
+    // Like the game: both frames are the pose, and nothing for the animation step to move along
+    u8* m = (u8*)moby;
+    moby->field41_0x68 = pose;
+    moby->field42_0x6c = pose;
+    memset(m + 0x50, 0, 4);
+    float zero = 0.0f;
+    memcpy(m + 0x54, &zero, sizeof(float));
+    memcpy(m + 0x5c, &zero, sizeof(float));
+
+    return true;
 }
 
 static void capture(MPMirrorMoby* out, Moby* moby, u8 slot) {
@@ -79,6 +172,8 @@ static void capture(MPMirrorMoby* out, Moby* moby, u8 slot) {
     memcpy(&out->anim_speed, m + 0x58, sizeof(float));
     memcpy(&out->anim_rate, m + 0x5c, sizeof(float));
     out->anim_flags = m[0x70];
+
+    out->pose = joint_pose_kind(moby);
 }
 
 void Mirror::on_hero_animation_started(u32 blend_frames) {
@@ -536,7 +631,11 @@ void Mirror::update_attachment(Moby* moby) {
             // Keep it in the update loop (0x2 takes it out) and let the game build its transform from our matrix
             moby->mode_bits = (state->mode_bits & ~(0x2 | 0x4)) | 0x100;
 
-            apply_animation(moby, state, &remote->attachment_animation[slot], false);
+            u8* pose = state->pose != MP_MIRROR_POSE_ANIMATION && state->pose <= JOINT_POSE_KINDS
+                       ? joint_pose_buffers_[i][state->pose - 1] : nullptr;
+            if (pose == nullptr || !pose_from_joints(moby, state->pose, hero_of(remote->uuid), pose)) {
+                apply_animation(moby, state, &remote->attachment_animation[slot], false);
+            }
             return;
         }
     }

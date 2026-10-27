@@ -473,8 +473,17 @@ typedef struct {
     float anim_rate;
     u8 anim_flags;
     u8 blend_frames;      // How many frames the animation blends in over when it starts
-    u16 pad;
+    u8 pose;              // MP_MIRROR_POSE_*. Games before it send 0.
+    u8 pad;
 } MPMirrorMoby;
+
+// How the sender's game poses an attachment: from its own animation, or (gloves, things worn on the head, boots) from
+//  the player's joints, which the game does in a pose buffer of its own for each of these kinds (see Mirror.cpp)
+#define MP_MIRROR_POSE_ANIMATION  0
+#define MP_MIRROR_POSE_GLOVE      1
+#define MP_MIRROR_POSE_HEAD       2
+#define MP_MIRROR_POSE_BOOT       3
+#define MP_MIRROR_POSE_OTHER_BOOT 4
 
 typedef struct {
     u8 bone;
