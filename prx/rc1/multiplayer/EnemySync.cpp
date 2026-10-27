@@ -807,8 +807,8 @@ static void after_transform(Moby* moby) {
         }
 
         // Another game runs it. Once our player is clearly nearer than theirs, ask that game to hand it over, so its
-        //  AI picks up here from exactly where it left off there.
-        if (distance < CLAIM_RADIUS && distance + CLAIM_MARGIN < enemy->owner_distance &&
+        //  AI picks up here from exactly where it left off there. Not our copies: those only exist in that game.
+        if (!enemy->copy && distance < CLAIM_RADIUS && distance + CLAIM_MARGIN < enemy->owner_distance &&
             ticks_ - enemy->claim_tick >= CLAIM_INTERVAL) {
             enemy->claim_tick = ticks_;
 
@@ -1073,6 +1073,28 @@ void EnemySync::on_tick(Client* client) {
     }
 }
 
+// Variables for our copies of enemies placed in the level. The game gives a moby it spawns 0x80 bytes of them, but
+//  enemies placed in the level can have more (Aridia's sand sharks 0x2e0), so a copy shared the rest with the next
+//  mobys spawned, and the game read their variables as the copy's (a sand shark copy's group index pointed at a moby
+//  with no variables, and the game crashed).
+#define REVIVED_VARS_SIZE 0x400
+#define MAX_REVIVED_VARS 16
+static u8 revived_vars_[MAX_REVIVED_VARS][REVIVED_VARS_SIZE] __attribute__((aligned(16)));
+static Moby* revived_vars_owner_[MAX_REVIVED_VARS];
+
+static u8* take_revived_vars(Moby* moby) {
+    for (int i = 0; i < MAX_REVIVED_VARS; i++) {
+        Moby* owner = revived_vars_owner_[i];
+        if (owner == nullptr || owner->state < 0 || owner->vars != revived_vars_[i]) {
+            revived_vars_owner_[i] = moby;
+            memset(revived_vars_[i], 0, REVIVED_VARS_SIZE);
+            return revived_vars_[i];
+        }
+    }
+
+    return nullptr;
+}
+
 // A copy of a moby another game's enemy spawned, which our copy of that enemy didn't spawn (it doesn't run here). Or
 //  of an enemy placed in the level that we destroyed here, which is back in that game because a respawn there set the
 //  level up again: we show it from there too, so we both see the same enemies.
@@ -1100,6 +1122,19 @@ static Moby* make_copy(MPEnemyState* state, bool revived) {
     // What a spawned enemy fires shouldn't bump into anything here, but an enemy has to be there to be hit
     if (!revived) {
         moby->collision = nullptr;
+    }
+
+    // Variables of its own, and no update at all: it never runs here, whatever else happens to it
+    if (revived) {
+        u8* vars = take_revived_vars(moby);
+        if (vars == nullptr) {
+            moby->state = -1;
+            delete_moby(moby);
+            return nullptr;
+        }
+
+        moby->vars = vars;
+        moby->p_update = nullptr;
     }
 
     return moby;
@@ -1368,6 +1403,18 @@ void EnemySync::on_spawned(Moby* moby) {
 
 void EnemySync::reset() {
     Logger::debug("EnemySync %u: reset", ticks_);
+
+    // Our copies are only known while we track them: they'd stay behind as mobys nobody knows, so they go
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        SyncedEnemy* enemy = &enemies_[i];
+        Moby* moby = LEVEL_MOBYS_START != nullptr ? LEVEL_MOBYS_START + enemy->index : nullptr;
+        if (enemy->used && enemy->copy && moby != nullptr && moby < moby_ptr_end && moby->state >= 0 &&
+            moby->o_class == (short)enemy->o_class) {
+            moby->state = -1;
+            delete_moby(moby);
+        }
+    }
+    memset(revived_vars_owner_, 0, sizeof(revived_vars_owner_));
 
     SpawnedMobys::reset();
 
