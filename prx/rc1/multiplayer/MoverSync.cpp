@@ -261,18 +261,30 @@ static bool looks_like_pointer(u32 value) {
 //  bytes or halves packed together: those can be the game's bookkeeping too (Veldin 2's class 1356 keeps whether it's
 //  on a list in the second byte of 0xe0 in its variables; set from the other game, it unlinked itself from a list it
 //  wasn't on there, and that game crashed).
+static bool whole_number(u32 value) {
+    s32 whole = (s32)value;
+    return whole > -0x10000 && whole < 0x10000;
+}
+
 static bool copyable(u32 value) {
     if (looks_like_pointer(value)) {
         return false;
     }
 
-    s32 whole = (s32)value;
-    if (whole > -0x10000 && whole < 0x10000) {
+    if (whole_number(value)) {
         return true;
     }
 
     u32 exponent = (value >> 23) & 0xff;
     return exponent >= 127 - 40 && exponent <= 127 + 40;
+}
+
+// Of its variables it hasn't changed since we first saw it (how the level set it up), the ones we send anyway. Not
+//  whole numbers: those can be indexes into the game's moby table, and each game's table is laid out differently once
+//  a respawn has rebuilt it. Aridia's class 668 keeps the index of its manager; taking the other game's, it counted
+//  members on a moby without variables and that game crashed. Those only go once its own code changes them.
+static bool sent_unchanged(u32 value) {
+    return copyable(value) && !whole_number(value);
 }
 
 // How other games know an address in its variables that's about our player: our player's moby, where they are or
@@ -744,7 +756,8 @@ static void fill_state(Mover* mover, Moby* moby, float distance, OutgoingMover* 
             *changed |= bit;
         }
 
-        if (((*changed & bit) || all_words) && copyable(value) && n_words < MAX_WORDS) {
+        bool send = (*changed & bit) ? copyable(value) : all_words && sent_unchanged(value);
+        if (send && n_words < MAX_WORDS) {
             out->words[n_words].offset = offset;
             out->words[n_words].kind = MP_MOVER_WORD_VALUE;
             out->words[n_words].value = value;
@@ -764,7 +777,7 @@ static void fill_state(Mover* mover, Moby* moby, float distance, OutgoingMover* 
 
         u32 value, into;
         memcpy(&value, vars + word * 4, 4);
-        if (!copyable(value) || player_reference(value, &into) != MP_MOVER_WORD_VALUE) {
+        if (!sent_unchanged(value) || player_reference(value, &into) != MP_MOVER_WORD_VALUE) {
             continue;
         }
 
