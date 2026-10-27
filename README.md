@@ -31,7 +31,7 @@ European Trilogy disc (BCES01503). The PS2 version doesn't work.
    ```powershell
    irm https://raw.githubusercontent.com/adamlbunch/rac1-multiplayer/main/setup/setup-server.ps1 -OutFile $env:TEMP\setup-server.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\setup-server.ps1
    ```
-   It builds the co-op server ([adamlbunch/Lawrence](https://github.com/adamlbunch/Lawrence/tree/coop-fixes)) and puts
+   It builds the co-op server ([adamlbunch/Lawrence](https://github.com/adamlbunch/Lawrence)) and puts
    a **Ratchet Co-op** shortcut on the Desktop that starts the server and the game.
 3. **Connect the two PCs** with [Tailscale](https://tailscale.com) (free): both install it and sign in, and the host
    shares their PC with the guest from the [admin console](https://login.tailscale.com/admin/machines). The guest uses

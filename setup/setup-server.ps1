@@ -3,7 +3,7 @@
 Builds and sets up the Ratchet & Clank co-op server on the host's PC. Only the host runs it.
 
 .DESCRIPTION
-Gets the server's source (adamlbunch/Lawrence, branch coop-fixes), builds it, writes its settings and two launchers:
+Gets the server's source (adamlbunch/Lawrence, branch main), builds it, writes its settings and two launchers:
 "Start Co-op Server.cmd" and "Play Co-op.cmd" (starts the server if needed and boots the mod in RPCS3). Run it again
 to update the server; settings, saved campaign and launchers are kept.
 
@@ -45,7 +45,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 $Repository = 'https://github.com/adamlbunch/Lawrence'
-$Branch = 'coop-fixes'
+$Branch = 'main'
 
 function Step($text) { Write-Host "`n== $text" -ForegroundColor Cyan }
 function Ok($text) { Write-Host "   $text" -ForegroundColor Green }
@@ -74,7 +74,8 @@ Ok 'Git and the .NET SDK ready'
 
 Step 'Server source'
 if (Test-Path "$Source\.git") {
-    git -C $Source fetch --quiet origin
+    # --prune drops the old coop-fixes branch from clones made before main had the co-op code
+    git -C $Source fetch --quiet --prune origin
     git -C $Source checkout --quiet $Branch
     git -C $Source pull --quiet --ff-only origin $Branch
     Ok "Updated $Source"

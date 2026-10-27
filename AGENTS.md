@@ -3,8 +3,8 @@
 This guide is for an AI agent setting up two-player online co-op of the PS3 Ratchet & Clank (2002) for its user, end
 to end. It plays in the RPCS3 emulator with this repository's co-op build of the
 [rac1-multiplayer](https://github.com/bordplate/rac1-multiplayer) mod. One player (the **host**) also runs the
-co-op server, built from [adamlbunch/Lawrence](https://github.com/adamlbunch/Lawrence/tree/coop-fixes) branch
-`coop-fixes`. The other player is the **guest**. Both need this build of the mod. The official mod from bordplate's
+co-op server, built from the `main` branch of [adamlbunch/Lawrence](https://github.com/adamlbunch/Lawrence). The
+other player is the **guest**. Both need this build of the mod. The official mod from bordplate's
 releases connects but doesn't sync the game the same way, so don't install it.
 
 Commands are for Windows (PowerShell), which is what has been tested. Linux and macOS notes are at the end.
@@ -144,7 +144,7 @@ needed.
 2. Build:
    ```powershell
    $SERVER = "$HOME\Emulators\Lawrence"
-   git clone -b coop-fixes https://github.com/adamlbunch/Lawrence "$HOME\src\Lawrence"
+   git clone https://github.com/adamlbunch/Lawrence "$HOME\src\Lawrence"
    cd "$HOME\src\Lawrence"
    dotnet publish Lawrence -c Release -f net8.0 -r win-x64 --self-contained -p:PublishSingleFile=true -o $SERVER
    ```
@@ -243,7 +243,8 @@ The game adds a `userid` line itself. If a `settings.conf` is already there, cha
 
 - Mod: run `install-coop.ps1` again, or repeat step 4, on both PCs. Both players must run the same release.
 - Server: run `setup-server.ps1` again with the server stopped. By hand: `git pull` in the clone, then the
-  `dotnet publish` command from step 8. `settings.toml`, `saves` and the launchers stay.
+  `dotnet publish` command from step 8. A clone still on the old `coop-fixes` branch (it's gone)
+  needs `git fetch --prune` and `git switch main` first. `settings.toml`, `saves` and the launchers stay.
 
 ## Troubleshooting
 
