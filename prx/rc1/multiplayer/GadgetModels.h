@@ -37,6 +37,9 @@ struct GadgetModels {
     // The model a regular (non-gadget) moby class has loaded in our game, or null if it isn't loaded
     static MobyClass* loaded_class(u16 o_class);
 
+    // Which moby class a model loaded in our game is, 0xffff if it isn't in the class table
+    static u16 o_class_of(MobyClass* model);
+
     // Spawns a moby using the given model, whatever the game has loaded for its class
     static Moby* spawn_with_class(u16 o_class, MobyClass* model, u16 flags);
 };

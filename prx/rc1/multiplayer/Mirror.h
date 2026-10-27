@@ -30,6 +30,13 @@ struct MirrorSnapshot {
     u8 n_manipulators;
     MPMirrorManipulator manipulators[MP_MIRROR_MAX_MANIPULATORS];
     MPMirrorMoby attachment[MP_MIRROR_ATTACHMENT_SLOTS];
+
+    // What the hero has on top of its animation that comes in a part of its own (see MPPacketPlayerState)
+    u8 n_extra_manipulators;
+    u8 n_layers;
+    bool has_extras;    // That part arrived
+    MPMirrorManipulator extra_manipulators[MP_MIRROR_MAX_EXTRA_MANIPULATORS];
+    MPMirrorLayer layers[MP_MIRROR_MAX_LAYERS];
 };
 
 struct RemotePlayer {
@@ -46,9 +53,14 @@ struct RemotePlayer {
     MPMirrorMoby hero_state;
     u8 n_manipulators;
     MPMirrorManipulator manipulator_state[MP_MIRROR_MAX_MANIPULATORS];
+    u8 n_extra_manipulators;
+    MPMirrorManipulator extra_manipulator_state[MP_MIRROR_MAX_EXTRA_MANIPULATORS];
+    u8 n_layers;
+    MPMirrorLayer layer_state[MP_MIRROR_MAX_LAYERS];
 
     MirrorAnimation hero_animation;
     bool hero_manipulated;
+    bool hero_layered;
     Moby* attachment_mobys[MP_MIRROR_ATTACHMENT_SLOTS];
     MobyClass* attachment_models[MP_MIRROR_ATTACHMENT_SLOTS];  // What each copy must be drawn with, see GadgetModels
     MPMirrorMoby attachment_state[MP_MIRROR_ATTACHMENT_SLOTS];

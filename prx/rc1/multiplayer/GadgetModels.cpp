@@ -238,6 +238,25 @@ MobyClass* GadgetModels::loaded_class(u16 o_class) {
     return CLASS_TABLE[CLASS_SLOTS[o_class]];
 }
 
+u16 GadgetModels::o_class_of(MobyClass* model) {
+    // Asked every frame for the same few models
+    static MobyClass* last_model = nullptr;
+    static u16 last_o_class = 0xffff;
+    if (model == last_model && last_o_class != 0xffff && loaded_class(last_o_class) == model) {
+        return last_o_class;
+    }
+
+    for (u16 o_class = 0; o_class < CLASS_SLOT_COUNT; o_class++) {
+        if (CLASS_SLOTS[o_class] != 0xff && CLASS_TABLE[CLASS_SLOTS[o_class]] == model) {
+            last_model = model;
+            last_o_class = o_class;
+            return o_class;
+        }
+    }
+
+    return 0xffff;
+}
+
 Moby* GadgetModels::spawn_with_class(u16 o_class, MobyClass* model, u16 flags) {
     if (o_class >= CLASS_SLOT_COUNT || CLASS_SLOTS[o_class] == 0xff || model == nullptr) {
         return nullptr;

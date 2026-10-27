@@ -82,6 +82,9 @@ SHK_FUNCTION_DEFINE_STATIC_5(0x57820, int, coll_line, Vec4*, position1, Vec4*, p
 // Poses a model from a player's joints (the ones listed, ending in -1, then `blank_joints` left unposed) into `pose`,
 //  which the moby drawn with it then points its frame pointers at. Null `from` is our own player.
 SHK_FUNCTION_DEFINE_STATIC_5(0x91090, void, pose_from_player_joints, const s32*, joints, void*, pose, MobyClass*, model, s32, blank_joints, Moby*, from);
+// Moves an animation layer (an animation played on some of a moby's joints over its own, see Mirror.cpp) along and
+//  works out its joints for the frames it's on
+SHK_FUNCTION_DEFINE_STATIC_2(0xf0b38, void, update_animation_layer, Moby*, moby, void*, layer);
 
 void draw_text_opt(TextOpt* text_opt, Color color, char* text, ssize_t len, float text_size);
 

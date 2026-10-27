@@ -27,7 +27,8 @@
 static RemotePlayer remote_players_[MIRROR_MAX_PLAYERS];
 
 // The game applies manipulators with vector instructions, so they need 16 byte alignment
-static Manipulator manipulators_[MIRROR_MAX_PLAYERS][MP_MIRROR_MAX_MANIPULATORS] __attribute__((aligned(16)));
+static Manipulator manipulators_[MIRROR_MAX_PLAYERS][MP_MIRROR_MAX_MANIPULATORS + MP_MIRROR_MAX_EXTRA_MANIPULATORS]
+    __attribute__((aligned(16)));
 
 // Copies whose player is gone, deleted at the next tick: deleting a moby during the update loop could break the
 //  loop's walk through the moby list
@@ -65,6 +66,43 @@ static const JointPose joint_poses_[JOINT_POSE_KINDS] = {
 #define HERO_O_CLASS 0
 
 static u8 joint_pose_buffers_[MIRROR_MAX_PLAYERS][JOINT_POSE_KINDS][JOINT_POSE_SIZE] __attribute__((aligned(16)));
+
+// Animation layers: animations the game plays on a set of a moby's joints over its own, like the hero's arm raised
+//  holding a weapon. The moby's +0x60 points at the first, each at the next. The game keeps the player's in a pool of
+//  6 at 0xa2c440. Copies of other players get theirs from us, played on the frames their game is on.
+#define LAYER_SIZE 0x40
+#define LAYER_JOINT_SET 0x00            // s16: which of the class's sets of joints, listed at the class's +0x1c
+#define LAYER_JOINT_COUNT 0x02          // u16
+#define LAYER_IN_USE 0x04
+#define LAYER_FRAME0_FROM_SOURCE 0x06
+#define LAYER_FRAME1_FROM_SOURCE 0x07
+#define LAYER_WEIGHT 0x08               // float
+#define LAYER_JOINTS 0x0c               // The set's joint numbers
+#define LAYER_RESULT 0x10               // Where its joints are worked out, LAYER_RESULT_SIZE each
+#define LAYER_CLASS 0x14
+#define LAYER_SOURCE_CLASS 0x18         // Whose sequences the frames flagged above are of
+#define LAYER_NEXT 0x1c
+#define LAYER_ANIMATION 0x20            // frame0, frame1, prev_seq, seq, like a moby's +0x50
+#define LAYER_T 0x24
+#define LAYER_SPEED 0x28
+#define LAYER_RATE 0x2c
+#define LAYER_FRAME0 0x38               // Frame data, or the buffer a source class's frame is built in
+#define LAYER_FRAME1 0x3c
+
+#define LAYER_RESULT_SIZE 0x30
+#define LAYER_MAX_JOINTS 48
+#define LAYER_FRAME_SIZE 0x400
+
+// The game's pool size
+#define MIRROR_MAX_HERO_LAYERS 6
+
+struct LayerMemory {
+    u8 layer[LAYER_SIZE];
+    u8 result[LAYER_MAX_JOINTS * LAYER_RESULT_SIZE];
+    u8 frames[2][LAYER_FRAME_SIZE];
+};
+
+static LayerMemory layer_memory_[MIRROR_MAX_PLAYERS][MP_MIRROR_MAX_LAYERS] __attribute__((aligned(16)));
 
 static u32 frame_ = 0;
 static u32 ticks_ = 0;
@@ -139,6 +177,114 @@ static bool pose_from_joints(Moby* moby, u8 kind, Moby* hero, u8* pose) {
     return true;
 }
 
+static bool frame_exists(MobyClass* model, u8 seq, u8 frame) {
+    // Sequence count at 0xc, sequence pointers from 0x48
+    u8* m = (u8*)model;
+    if (seq >= m[0xc]) {
+        return false;
+    }
+
+    MobySeq* sequence = ((MobySeq**)(m + 0x48))[seq];
+    return sequence != nullptr && frame < sequence->frame_count;
+}
+
+// Sets one of a player's animation layers up on our copy of their hero, and works out its joints. False if it can't be.
+static bool set_up_layer(LayerMemory* memory, Moby* hero, MPMirrorLayer* state) {
+    MobyClass* model = hero->p_class;
+    u8* m = (u8*)model;
+
+    // The class's sets of joints: a count, then one pointer each. A frame built for a layer has 8 bytes per joint.
+    s32* sets = *(s32**)(m + 0x1c);
+    if (sets == nullptr || state->joint_set < 0 || state->joint_set >= sets[0] ||
+        m[8] * 8 + 0x18 > LAYER_FRAME_SIZE) {
+        return false;
+    }
+
+    // A set: its joint count at +3, its joints +4 past the offset at +1
+    u8* set = (u8*)sets[1 + state->joint_set];
+    if (set == nullptr || set[3] > LAYER_MAX_JOINTS) {
+        return false;
+    }
+
+    MobyClass* source = nullptr;
+    if (state->source_o_class != 0xffff) {
+        source = GadgetModels::is_gadget(state->source_o_class) ? GadgetModels::load(state->source_o_class)
+                                                                 : GadgetModels::loaded_class(state->source_o_class);
+    }
+
+    bool frame0_from_source = (state->from_source & MP_MIRROR_LAYER_FRAME0_FROM_SOURCE) != 0;
+    bool frame1_from_source = (state->from_source & MP_MIRROR_LAYER_FRAME1_FROM_SOURCE) != 0;
+    MobyClass* frame0_model = frame0_from_source ? source : model;
+    MobyClass* frame1_model = frame1_from_source ? source : model;
+    if (frame0_model == nullptr || frame1_model == nullptr ||
+        !frame_exists(frame0_model, state->prev_seq, state->frame0) ||
+        !frame_exists(frame1_model, state->seq, state->frame1)) {
+        return false;
+    }
+
+    u8* layer = memory->layer;
+    memset(layer, 0, LAYER_SIZE);
+    *(s16*)(layer + LAYER_JOINT_SET) = state->joint_set;
+    *(u16*)(layer + LAYER_JOINT_COUNT) = set[3];
+    layer[LAYER_IN_USE] = 1;
+    layer[LAYER_FRAME0_FROM_SOURCE] = frame0_from_source;
+    layer[LAYER_FRAME1_FROM_SOURCE] = frame1_from_source;
+    memcpy(layer + LAYER_WEIGHT, &state->weight, sizeof(float));
+    *(u8**)(layer + LAYER_JOINTS) = set + set[1] + 4;
+    *(u8**)(layer + LAYER_RESULT) = memory->result;
+    *(MobyClass**)(layer + LAYER_CLASS) = model;
+    *(MobyClass**)(layer + LAYER_SOURCE_CLASS) = source;
+    layer[LAYER_ANIMATION] = state->frame0;
+    layer[LAYER_ANIMATION + 1] = state->frame1;
+    layer[LAYER_ANIMATION + 2] = state->prev_seq;
+    layer[LAYER_ANIMATION + 3] = state->seq;
+    memcpy(layer + LAYER_T, &state->t, sizeof(float));
+    *(u8**)(layer + LAYER_FRAME0) = memory->frames[0];
+    *(u8**)(layer + LAYER_FRAME1) = memory->frames[1];
+
+    // With no speed or rate it stays on the frames we set and only works out its joints
+    update_animation_layer(hero, layer);
+
+    return true;
+}
+
+static bool our_layer(void* layer) {
+    return (u8*)layer >= (u8*)layer_memory_ && (u8*)layer < (u8*)layer_memory_ + sizeof(layer_memory_);
+}
+
+static void apply_layers(Moby* hero, RemotePlayer* remote) {
+    LayerMemory* memory = layer_memory_[remote - remote_players_];
+    u8* first = nullptr;
+    u8* last = nullptr;
+
+    for (u8 i = 0; i < remote->n_layers; i++) {
+        if (!set_up_layer(&memory[i], hero, &remote->layer_state[i])) {
+            continue;
+        }
+
+        if (last != nullptr) {
+            *(u8**)(last + LAYER_NEXT) = memory[i].layer;
+        } else {
+            first = memory[i].layer;
+        }
+        last = memory[i].layer;
+    }
+
+    hero->field36_0x60 = first;
+    remote->hero_layered = first != nullptr;
+}
+
+// Our layers are only for a hero we're mirroring: the game would play them on whatever the moby turns into
+static void drop_layers(Moby* hero, RemotePlayer* remote) {
+    if (hero != nullptr && our_layer(hero->field36_0x60)) {
+        hero->field36_0x60 = nullptr;
+    }
+
+    if (remote != nullptr) {
+        remote->hero_layered = false;
+    }
+}
+
 static void capture(MPMirrorMoby* out, Moby* moby, u8 slot) {
     u8* m = (u8*)moby;
 
@@ -205,6 +351,59 @@ static void send_part(Client* client, MPPacketPlayerState* state, MPMirrorMoby* 
     client->send(&packet);
 }
 
+// The part of a frame with the hero's extra manipulators and its animation layers, which has no mobys
+static void send_extras(Client* client, MPPacketPlayerState* state, MPMirrorManipulator* manipulators,
+                        MPMirrorLayer* layers) {
+    size_t manipulators_len = state->n_extra_manipulators * sizeof(MPMirrorManipulator);
+    size_t len = sizeof(MPPacketPlayerState) + manipulators_len + state->n_layers * sizeof(MPMirrorLayer);
+
+    Packet packet = Packet(len);
+    packet.header->type = MP_PACKET_PLAYER_STATE;
+    packet.retain_after_send = true;
+
+    MPPacketPlayerState* body = (MPPacketPlayerState*)packet.body;
+    memcpy(body, state, sizeof(MPPacketPlayerState));
+    body->n_mobys = 0;
+    body->n_manipulators = 0;
+
+    char* data = (char*)body + sizeof(MPPacketPlayerState);
+    memcpy(data, manipulators, manipulators_len);
+    memcpy(data + manipulators_len, layers, state->n_layers * sizeof(MPMirrorLayer));
+
+    client->send(&packet);
+}
+
+static void capture_manipulator(MPMirrorManipulator* out, Manipulator* manipulator) {
+    out->bone = manipulator->animation_bone;
+    out->state = manipulator->state;
+    out->scale_on = manipulator->scaleOn;
+    out->absolute = manipulator->absolute;
+    out->bone_id = manipulator->bone_id;
+    out->blend_t = manipulator->animation_blend_t;
+    memcpy(out->rotation, &manipulator->rotation, sizeof(out->rotation));
+    memcpy(out->scale, &manipulator->scale, sizeof(out->scale));
+    memcpy(out->translation, &manipulator->translation, sizeof(out->translation));
+}
+
+// False if other games couldn't play it: its frames are of a model they can't look up
+static bool capture_layer(MPMirrorLayer* out, u8* layer) {
+    memset(out, 0, sizeof(MPMirrorLayer));
+
+    MobyClass* source = *(MobyClass**)(layer + LAYER_SOURCE_CLASS);
+    out->joint_set = *(s16*)(layer + LAYER_JOINT_SET);
+    out->source_o_class = source != nullptr ? GadgetModels::o_class_of(source) : 0xffff;
+    out->frame0 = layer[LAYER_ANIMATION];
+    out->frame1 = layer[LAYER_ANIMATION + 1];
+    out->prev_seq = layer[LAYER_ANIMATION + 2];
+    out->seq = layer[LAYER_ANIMATION + 3];
+    out->from_source = (layer[LAYER_FRAME0_FROM_SOURCE] ? MP_MIRROR_LAYER_FRAME0_FROM_SOURCE : 0) |
+                       (layer[LAYER_FRAME1_FROM_SOURCE] ? MP_MIRROR_LAYER_FRAME1_FROM_SOURCE : 0);
+    memcpy(&out->t, layer + LAYER_T, sizeof(float));
+    memcpy(&out->weight, layer + LAYER_WEIGHT, sizeof(float));
+
+    return out->from_source == 0 || out->source_o_class != 0xffff;
+}
+
 void Mirror::send_snapshot(Client* client) {
     if (client == nullptr || ratchet_moby == nullptr || game_state != PlayerControl || !valid_moby(ratchet_moby)) {
         return;
@@ -221,26 +420,42 @@ void Mirror::send_snapshot(Client* client) {
     hero.anim_restarts = hero_animation_restarts_;
     hero.blend_frames = hero_blend_frames_;
 
-    // Bone tweaks on top of the animation, like Ratchet's head being scaled down a little
+    // Bone tweaks on top of the animation, like Ratchet's head being scaled down a little. Aiming a weapon adds a
+    //  chain of them down the arm, more than fit with the hero, so the rest go in a part of their own.
     MPMirrorManipulator manipulators[MP_MIRROR_MAX_MANIPULATORS];
+    MPMirrorManipulator extra_manipulators[MP_MIRROR_MAX_EXTRA_MANIPULATORS];
     u8 n_manipulators = 0;
     for (Manipulator* manipulator = ratchet_moby->manipulator1;
-         manipulator != nullptr && n_manipulators < MP_MIRROR_MAX_MANIPULATORS;
+         manipulator != nullptr && n_manipulators < MP_MIRROR_MAX_MANIPULATORS + MP_MIRROR_MAX_EXTRA_MANIPULATORS;
          manipulator = manipulator->pNext) {
         if ((u32)manipulator < 0x10000 || (u32)manipulator >= 0xC0000000) {
             break;
         }
 
-        MPMirrorManipulator* out = &manipulators[n_manipulators++];
-        out->bone = manipulator->animation_bone;
-        out->state = manipulator->state;
-        out->scale_on = manipulator->scaleOn;
-        out->absolute = manipulator->absolute;
-        out->bone_id = manipulator->bone_id;
-        out->blend_t = manipulator->animation_blend_t;
-        memcpy(out->rotation, &manipulator->rotation, sizeof(out->rotation));
-        memcpy(out->scale, &manipulator->scale, sizeof(out->scale));
-        memcpy(out->translation, &manipulator->translation, sizeof(out->translation));
+        capture_manipulator(n_manipulators < MP_MIRROR_MAX_MANIPULATORS
+                            ? &manipulators[n_manipulators]
+                            : &extra_manipulators[n_manipulators - MP_MIRROR_MAX_MANIPULATORS], manipulator);
+        n_manipulators += 1;
+    }
+
+    if (n_manipulators > MP_MIRROR_MAX_MANIPULATORS) {
+        state.n_extra_manipulators = n_manipulators - MP_MIRROR_MAX_MANIPULATORS;
+        n_manipulators = MP_MIRROR_MAX_MANIPULATORS;
+    }
+
+    // Animations on part of the body over the hero's own, like the arm raised holding a weapon
+    MPMirrorLayer layers[MP_MIRROR_MAX_LAYERS];
+    u8* layer = (u8*)ratchet_moby->field36_0x60;
+    for (int i = 0; layer != nullptr && i < MIRROR_MAX_HERO_LAYERS && state.n_layers < MP_MIRROR_MAX_LAYERS; i++) {
+        if ((u32)layer < 0x10000 || (u32)layer >= 0xC0000000) {
+            break;
+        }
+
+        if (capture_layer(&layers[state.n_layers], layer)) {
+            state.n_layers += 1;
+        }
+
+        layer = *(u8**)(layer + LAYER_NEXT);
     }
 
     MPMirrorMoby attachments[MP_MIRROR_ATTACHMENT_SLOTS];
@@ -257,6 +472,10 @@ void Mirror::send_snapshot(Client* client) {
     }
 
     send_part(client, &state, &hero, 1, manipulators, n_manipulators);
+
+    if (state.n_extra_manipulators > 0 || state.n_layers > 0) {
+        send_extras(client, &state, extra_manipulators, layers);
+    }
 
     // Up to 4 attachments per packet keeps each packet in its own buffer
     for (u8 sent = 0; sent < n_attachments; sent += 4) {
@@ -314,12 +533,13 @@ static void deactivate(RemotePlayer* remote, bool mobys_exist) {
         remove_attachment(remote, slot, mobys_exist);
     }
 
-    if (mobys_exist && remote->hero_manipulated) {
+    if (mobys_exist && (remote->hero_manipulated || remote->hero_layered)) {
         GameClient* client = (GameClient*)Game::shared().client();
         Moby* hero = client != nullptr ? client->moby_for_uuid(remote->uuid) : nullptr;
-        if (hero != nullptr) {
+        if (hero != nullptr && remote->hero_manipulated) {
             hero->manipulator1 = nullptr;
         }
+        drop_layers(hero, remote);
     }
 
     memset(remote, 0, sizeof(RemotePlayer));
@@ -390,9 +610,29 @@ void Mirror::receive(MPPacketPlayerState* packet, size_t len) {
         snapshot->has_hero = false;
         snapshot->received = 0;
         snapshot->n_manipulators = 0;
+        snapshot->has_extras = false;
     }
 
     snapshot->attachments = packet->attachments;
+    snapshot->n_extra_manipulators = packet->n_extra_manipulators;
+    snapshot->n_layers = packet->n_layers;
+
+    // The part with the hero's extra manipulators and animation layers
+    if (packet->n_mobys == 0 && (packet->n_extra_manipulators > 0 || packet->n_layers > 0)) {
+        size_t manipulators_len = packet->n_extra_manipulators * sizeof(MPMirrorManipulator);
+        if (packet->n_extra_manipulators > MP_MIRROR_MAX_EXTRA_MANIPULATORS || packet->n_layers > MP_MIRROR_MAX_LAYERS ||
+            len < sizeof(MPPacketPlayerState) + manipulators_len + packet->n_layers * sizeof(MPMirrorLayer)) {
+            Logger::error("Mirror: malformed player state extras (%d bytes)", len);
+            snapshot->n_extra_manipulators = 0;
+            snapshot->n_layers = 0;
+            return;
+        }
+
+        char* data = (char*)packet + sizeof(MPPacketPlayerState);
+        memcpy(snapshot->extra_manipulators, data, manipulators_len);
+        memcpy(snapshot->layers, data + manipulators_len, packet->n_layers * sizeof(MPMirrorLayer));
+        snapshot->has_extras = true;
+    }
 
     MPMirrorMoby* mobys = (MPMirrorMoby*)((char*)packet + sizeof(MPPacketPlayerState));
     for (u8 i = 0; i < packet->n_mobys; i++) {
@@ -486,6 +726,16 @@ void Mirror::on_tick() {
         remote->n_manipulators = current->n_manipulators;
         memcpy(remote->manipulator_state, current->manipulators, sizeof(remote->manipulator_state));
 
+        // When the part with what else is on top of the hero's animation got lost, keep showing what we had
+        bool no_extras = current->n_extra_manipulators == 0 && current->n_layers == 0;
+        if (current->has_extras || no_extras) {
+            remote->n_extra_manipulators = no_extras ? 0 : current->n_extra_manipulators;
+            remote->n_layers = no_extras ? 0 : current->n_layers;
+            memcpy(remote->extra_manipulator_state, current->extra_manipulators,
+                   sizeof(remote->extra_manipulator_state));
+            memcpy(remote->layer_state, current->layers, sizeof(remote->layer_state));
+        }
+
         for (int slot = 0; slot < MP_MIRROR_ATTACHMENT_SLOTS; slot++) {
             u16 bit = 1 << slot;
 
@@ -576,11 +826,13 @@ static void apply_transform(Moby* moby, MPMirrorMoby* state) {
 bool Mirror::apply_hero(Moby* moby, u16 uuid) {
     RemotePlayer* remote = find_remote(uuid);
     if (remote == nullptr || !remote->showing || game_state != PlayerControl) {
+        drop_layers(moby, remote);
         return false;
     }
 
     // The player turned into something else (Clank, Giant Clank...): the regular moby update swaps the moby first
     if (remote->hero_state.o_class != moby->o_class) {
+        drop_layers(moby, remote);
         return false;
     }
 
@@ -588,8 +840,11 @@ bool Mirror::apply_hero(Moby* moby, u16 uuid) {
     apply_animation(moby, &remote->hero_state, &remote->hero_animation, true);
 
     Manipulator* manipulators = manipulators_[remote - remote_players_];
-    for (u8 i = 0; i < remote->n_manipulators; i++) {
-        MPMirrorManipulator* state = &remote->manipulator_state[i];
+    u8 n_manipulators = remote->n_manipulators + remote->n_extra_manipulators;
+    for (u8 i = 0; i < n_manipulators; i++) {
+        MPMirrorManipulator* state = i < remote->n_manipulators
+                                     ? &remote->manipulator_state[i]
+                                     : &remote->extra_manipulator_state[i - remote->n_manipulators];
         Manipulator* manipulator = &manipulators[i];
 
         manipulator->animation_bone = state->bone;
@@ -603,11 +858,13 @@ bool Mirror::apply_hero(Moby* moby, u16 uuid) {
         manipulator->scale.w = 0;
         memcpy(&manipulator->translation, state->translation, sizeof(state->translation));
         manipulator->translation.w = 0;
-        manipulator->pNext = i + 1 < remote->n_manipulators ? &manipulators[i + 1] : nullptr;
+        manipulator->pNext = i + 1 < n_manipulators ? &manipulators[i + 1] : nullptr;
     }
 
-    moby->manipulator1 = remote->n_manipulators > 0 ? manipulators : nullptr;
+    moby->manipulator1 = n_manipulators > 0 ? manipulators : nullptr;
     remote->hero_manipulated = true;
+
+    apply_layers(moby, remote);
 
     return true;
 }

@@ -441,6 +441,8 @@ typedef struct {
 #define MP_MIRROR_SLOT_HERO          0xff
 #define MP_MIRROR_ATTACHMENT_SLOTS   14  // 7 gadget slots on the player, 2 mobys each
 #define MP_MIRROR_MAX_MANIPULATORS   7  // Most that fit with the hero in a packet's own buffer
+#define MP_MIRROR_MAX_EXTRA_MANIPULATORS 7
+#define MP_MIRROR_MAX_LAYERS         3
 
 typedef struct {
     u16 sender;           // Filled in by the server with the ID the receiving game has for the sender's hero moby
@@ -448,8 +450,31 @@ typedef struct {
     u8 n_manipulators;
     u32 frame;            // Sender's frame counter
     u16 attachments;      // Bit per attachment slot the sender has this frame, including ones in other parts
-    u16 pad;
+    // What the hero has on top of its own animation that doesn't fit in the part with it: the manipulators past
+    //  MP_MIRROR_MAX_MANIPULATORS and its animation layers. Every part of a frame says how many there are, and the
+    //  part without mobys carries them after this header, manipulators first. Games before these send 0.
+    u8 n_extra_manipulators;
+    u8 n_layers;
 } MPPacketPlayerState;
+
+// An animation the hero plays on some of its joints over its own, like the arm aiming a weapon. Blends from frame0 of
+//  prev_seq to frame1 of seq, t of the way. The sequences are the hero class's, or the source class's for the frames
+//  `from_source` says.
+typedef struct {
+    s16 joint_set;        // Which of the hero class's sets of joints it plays on
+    u16 source_o_class;   // 0xffff for none
+    u8 frame0;
+    u8 frame1;
+    u8 prev_seq;
+    u8 seq;
+    u8 from_source;       // MP_MIRROR_LAYER_*_FROM_SOURCE
+    u8 pad[3];
+    float t;
+    float weight;         // How much it counts over the hero's own animation
+} MPMirrorLayer;
+
+#define MP_MIRROR_LAYER_FRAME0_FROM_SOURCE 1
+#define MP_MIRROR_LAYER_FRAME1_FROM_SOURCE 2
 
 typedef struct {
     u8 slot;              // MP_MIRROR_SLOT_HERO or an attachment slot (gadget slot * 2 + index)
