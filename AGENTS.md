@@ -9,6 +9,17 @@ releases connects but doesn't sync the game the same way, so don't install it.
 
 Commands are for Windows (PowerShell), which is what has been tested. Linux and macOS notes are at the end.
 
+## Start here
+
+Ask the user first:
+1. **Host or guest?** Only the host runs the server (step 8). The guest does everything else.
+2. **Guest only:** the host's Tailscale IP (`100.x.y.z`) and the Tailscale share link or invite the host sent (step 7).
+   Without them the guest can install everything but can't connect yet.
+3. **Their name in the game.** It must differ from the other player's.
+
+If the user played an earlier version, most of it is already there: run `install-coop.ps1` (fast path below), which
+updates the mod and keeps their settings, then check the table.
+
 ## Ground rules
 
 - **The user must own the game.** Never download Ratchet & Clank, a `.rap` license, or PS3 system software from
