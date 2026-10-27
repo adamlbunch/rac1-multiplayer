@@ -26,9 +26,15 @@
 #define MAX_WORDS 48
 
 // How often the game whose player is nearest sends a mover: often while another player is near enough to see it
-//  well, now and then otherwise so it's in step by the time they get there
+//  well, less the further they are, and now and then otherwise so it's in step by the time they get there. Kerwan has
+//  over 200 movers in its traffic; sent 4 times a second each, they took 450 KB/s to the other player, more than their
+//  game took in, and the gold bolts, items and unlocks behind them in the server's queue arrived up to a minute late.
 #define SEND_INTERVAL_NEAR 15
+#define SEND_INTERVAL_MID 30
 #define SEND_INTERVAL_FAR 60
+#define SEND_INTERVAL_AWAY 120
+#define CLOSE_RADIUS 40.0f
+#define MID_RADIUS 90.0f
 #define NEAR_RADIUS 150.0f
 
 // A game that's this much nearer to a mover than the one sending it takes it over
@@ -55,7 +61,7 @@
 #define STABLE_FRAMES 30
 #define INTERACT_RADIUS 8.0f
 
-// Things that change their state send it right away when it changes, and every so often otherwise
+// Things that change their state send it right away when it changes (unless they cycle), and every so often otherwise
 #define STATE_SEND_INTERVAL 60
 
 // A thing that changes its state by itself more often than this sends no more changes for a while: it's blinking
@@ -790,18 +796,20 @@ static void queue_state(Mover* mover, Moby* moby, float distance, bool changes_s
 static void queue_transition(Mover* mover, Moby* moby, float distance, s8 state_before) {
     mover->transition_tick = ticks_;
 
-    if (ticks_ < mover->cycler_until) {
-        return;
-    }
-
     if (ticks_ - mover->window_tick > TRANSITION_WINDOW) {
         mover->window_tick = ticks_;
         mover->window_transitions = 0;
     }
 
-    mover->window_transitions += 1;
+    // One that keeps cycling stays a cycler, instead of sending a few changes again every CYCLER_TICKS (Kerwan's
+    //  traffic flips its state 10 times a second)
+    if (mover->window_transitions < 255) {
+        mover->window_transitions += 1;
+    }
     if (mover->window_transitions > MAX_WINDOW_TRANSITIONS) {
         mover->cycler_until = ticks_ + CYCLER_TICKS;
+    }
+    if ((s32)(ticks_ - mover->cycler_until) < 0) {
         return;
     }
 
@@ -878,9 +886,12 @@ void MoverSync::after_update(Moby* moby, int index, float distance, bool moves, 
     }
 
     u32 frame = EnemySync::frame();
-    int interval = others_sq < NEAR_RADIUS * NEAR_RADIUS ? SEND_INTERVAL_NEAR : SEND_INTERVAL_FAR;
+    int interval = others_sq < CLOSE_RADIUS * CLOSE_RADIUS ? SEND_INTERVAL_NEAR :
+                   others_sq < MID_RADIUS * MID_RADIUS ? SEND_INTERVAL_MID :
+                   others_sq < NEAR_RADIUS * NEAR_RADIUS ? SEND_INTERVAL_FAR : SEND_INTERVAL_AWAY;
     bool due = (frame + index) % interval == 0 ||
-               (changes_state && (moby->state != mover->sent_state || (frame + index) % STATE_SEND_INTERVAL == 0));
+               (changes_state && ((moby->state != mover->sent_state && !cycling) ||
+                                  (frame + index) % STATE_SEND_INTERVAL == 0));
     if (due && !involves_player(moby, mover->vars_size)) {
         queue_state(mover, moby, distance, changes_state);
     }
