@@ -6,9 +6,21 @@ Logo courtesy of Discord user \_triippy\_
 This is a multiplayer mod for the PS3 HD release of the original 2002 Ratchet & Clank. It runs on console and emulator thanks
 to [PS3-CKit](https://github.com/tge-was-taken/ps3-ckit) by TGE. 
 
-[![Download](https://raw.githubusercontent.com/MichaelRelaxen/racman/update/btn.png)](https://github.com/bordplate/rac1-multiplayer/releases/latest/download/BDUPS3-BORD00001_00-0000000000000000.pkg)
+## This fork: two-player co-op
 
-For the server side, check out [bordplate/Lawrence](https://github.com/bordplate/Lawrence).  
+This fork (branch `coop-fixes`) turns the mod into online co-op for two players. You play the campaign together, and
+each game shows the other player, their weapons and the enemies exactly as they are in the other's game. Both players
+install this build, and the host also runs the co-op server from
+[adamlbunch/Lawrence](https://github.com/adamlbunch/Lawrence/tree/coop-fixes) (branch `coop-fixes`).
+
+- **Download:** [Ratchet-Coop-Mod-sync.pkg](https://github.com/adamlbunch/rac1-multiplayer/releases/latest/download/Ratchet-Coop-Mod-sync.pkg)
+  (the latest [release](https://github.com/adamlbunch/rac1-multiplayer/releases)). Install it in RPCS3 with
+  **File → Install Packages/Raps/Edats**.
+- **Full setup** (RPCS3, firmware, the game, the mod, Tailscale, the server, playing): [AGENTS.md](AGENTS.md). It's
+  written so an AI agent can set everything up for you end to end, and it works as a step-by-step guide for people too.
+
+The official mod and server are [bordplate/rac1-multiplayer](https://github.com/bordplate/rac1-multiplayer) and
+[bordplate/Lawrence](https://github.com/bordplate/Lawrence). The rest of this README is theirs.
 
 We also have a [community over on Discord](https://discord.gg/5DXGkhb2zZ) for discussing the multiplayer and 
 [Randomizer](https://github.com/bordplate/rac1-randomizer) mods. 
@@ -17,7 +29,8 @@ We also have a [community over on Discord](https://discord.gg/5DXGkhb2zZ) for di
 Go to the releases and download the .pkg file. Install on either console or emulator the way you install .pkg files normally. 
 The game will show up on the XMB/Home screen on your PS3 or emulator. 
 
-You must have a legal copy of the european version (NPEA00385) of Ratchet & Clank already installed to start the mod. 
+You must have a legal copy of Ratchet & Clank already installed to start the mod: the European PSN version
+(NPEA00385), the US PSN version (NPUA80643) or the European Trilogy disc (BCES01503). 
 
 # Structure
 ## Launcher `/app/`
