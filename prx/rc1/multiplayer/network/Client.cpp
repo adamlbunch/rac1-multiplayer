@@ -262,6 +262,7 @@ bool Client::update(MPPacketHeader* header, void* packet_data) {
 
     // Check the table to see if we've processed this ack ID in this ack cycle.
     if (header->type != MP_PACKET_ACK && header->requires_ack > 0 && acked_[header->requires_ack] == header->ack_cycle) {
+        Logger::debug("Already had packet %d (ack %d cycle %d)", header->type, header->requires_ack, header->ack_cycle);
         do_ack_if_necessary(header);
         return false;
     }

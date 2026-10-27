@@ -504,6 +504,7 @@ void GameClient::update_set_state(MPPacketSetState* packet) {
             break;
         }
         case MP_STATE_TYPE_BLOCK_BOLT: {
+            Logger::debug("Gold bolt %d of planet %d taken by another player", packet->value, packet->offset);
             blocked_bolts[(packet->offset * 4) + packet->value] = 1;
 
             // Taken by another player: gone from our level right away, not only once we come near enough for its own
