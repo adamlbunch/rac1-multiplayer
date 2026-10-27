@@ -539,12 +539,16 @@ void GameClient::update_set_state(MPPacketSetState* packet) {
         }
         case MP_STATE_TYPE_GIVE_BOLTS: {
             #define SET_BOLTS 1
+            // Bolts we picked up since we last told the server still go to it (see Player): they were lost when bolts
+            //  from another player came in first, and that player then had fewer
+            s32 not_sent = (enable_communication_bitmap & ENABLE_ON_GET_BOLTS) ?
+                           player_bolts - Player::shared().previous_bolt_count : 0;
             if (packet->offset == SET_BOLTS) {
-                player_bolts = (s32)packet->value;
+                Player::shared().previous_bolt_count = (s32)packet->value;
             } else {
-                player_bolts += (s32)packet->value;
+                Player::shared().previous_bolt_count += (s32)packet->value;
             }
-            Player::shared().previous_bolt_count = player_bolts;
+            player_bolts = Player::shared().previous_bolt_count + not_sent;
             break;
         }
         case MP_STATE_TYPE_UNLOCK_LEVEL: {
