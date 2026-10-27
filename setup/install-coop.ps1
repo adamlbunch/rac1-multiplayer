@@ -190,4 +190,4 @@ if ($Username -or $Server) {
 Step 'Done'
 Write-Host '   Start RPCS3 and double-click "Ratchet Multiplayer". Press Start; the host presses Circle to make a lobby,'
 Write-Host '   the guest picks it with Cross and presses Circle. Full guide:'
-Write-Host '   https://github.com/adamlbunch/rac1-multiplayer/blob/main/AGENTS.md'
+Write-Host '   https://github.com/adamlbunch/rac1-multiplayer'
