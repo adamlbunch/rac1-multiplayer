@@ -290,8 +290,10 @@ static bool encode_references(u8* data, u16* references) {
 }
 
 // Puts our copies of the mobys the record is about in the words `references` says hold one. False if we don't have
-//  one.
-static bool decode_references(u16 sender, u8* data, u16 references) {
+//  one, with `spawned` saying whether it's one their weapons spawned.
+static bool decode_references(u16 sender, u8* data, u16 references, bool* spawned) {
+    *spawned = false;
+
     for (int offset = 4; offset < MP_EFFECT_SIZE; offset += 4) {
         if (!(references & (1 << (offset / 4)))) {
             continue;
@@ -315,6 +317,7 @@ static bool decode_references(u16 sender, u8* data, u16 references) {
         }
 
         if (moby == nullptr) {
+            *spawned = kind == REFERENCE_ATTACHMENT && (value & 0xffff) >= MP_MIRROR_SLOT_SPAWNED;
             return false;
         }
 
@@ -423,22 +426,30 @@ void EffectSync::on_tick() {
 
         // In step with that player's pose we're showing
         u32 shown;
-        bool due = !Mirror::shown_frame(effect->sender, &shown) || shown >= effect->frame ||
-                   effect->frame > shown + EFFECT_FAR_FRAMES || ticks_ - effect->tick > EFFECT_MAX_WAIT;
+        bool showing = Mirror::shown_frame(effect->sender, &shown);
+        bool due = !showing || shown >= effect->frame || effect->frame > shown + EFFECT_FAR_FRAMES ||
+                   ticks_ - effect->tick > EFFECT_MAX_WAIT;
         if (!due) {
+            continue;
+        }
+
+        // About a moby we have no copy of: not made. One their weapons just spawned only comes with the frame after
+        //  it first updated (see Mirror), so what it made in that update waits a frame for it.
+        u8 data[MP_EFFECT_SIZE];
+        memcpy(data, effect->data, MP_EFFECT_SIZE);
+        bool spawned;
+        if (!decode_references(effect->sender, data, effect->references, &spawned)) {
+            if (!spawned || !showing || shown > effect->frame || ticks_ - effect->tick > EFFECT_MAX_WAIT) {
+                effect->used = false;
+            }
             continue;
         }
 
         effect->used = false;
 
-        // About a moby we have no copy of: not made
-        if (!decode_references(effect->sender, effect->data, effect->references)) {
-            continue;
-        }
-
-        u8* made = _c_allocate_effect(effect->data[0]);
+        u8* made = _c_allocate_effect(data[0]);
         if (made != nullptr) {
-            memcpy(made + 1, effect->data + 1, MP_EFFECT_SIZE - 1);
+            memcpy(made + 1, data + 1, MP_EFFECT_SIZE - 1);
         }
     }
 }

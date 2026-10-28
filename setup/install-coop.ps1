@@ -7,6 +7,10 @@ Finds RPCS3 (or downloads it with -InstallRPCS3), checks the PS3 system software
 the latest release of the mod, turns RPCS3's networking on, and optionally saves the username and server address so
 the game connects by itself. Run it again to update the mod.
 
+It also puts coop-launcher.ps1 next to rpcs3.exe, with a "Ratchet Co-op" shortcut on the Desktop that runs it. The
+launcher boots the mod and keeps RPCS3's log of every session in the coop-logs folder there, so crashes can be
+debugged.
+
 Without parameters it asks for what it needs:
   powershell -ExecutionPolicy Bypass -File install-coop.ps1
 
@@ -21,18 +25,23 @@ Your name in the game. The two players need different names.
 
 .PARAMETER Server
 The server to connect to: 127.0.0.1 on the host's own PC, the host's Tailscale IP (100.x.y.z) for the guest.
+
+.PARAMETER NoShortcut
+Don't put a "Ratchet Co-op" shortcut on the Desktop.
 #>
 param(
     [string]$RPCS3,
     [switch]$InstallRPCS3,
     [string]$Username,
-    [string]$Server
+    [string]$Server,
+    [switch]$NoShortcut
 )
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 $ModUrl = 'https://github.com/adamlbunch/rac1-multiplayer/releases/latest/download/Ratchet-Coop-Mod-sync.pkg'
+$LauncherUrl = 'https://raw.githubusercontent.com/adamlbunch/rac1-multiplayer/main/setup/coop-launcher.ps1'
 $GameIds = 'NPEA00385', 'NPUA80643', 'BCES01503'
 $FirmwarePage = 'https://www.playstation.com/support/hardware/ps3/system-software/'
 
@@ -107,6 +116,45 @@ if (-not (Test-Path "$RPCS3\rpcs3.exe")) { throw "No rpcs3.exe in $RPCS3" }
 $RPCS3 = (Resolve-Path $RPCS3).Path
 Ok "Using $RPCS3"
 Wait-RPCS3Closed $RPCS3
+
+Step 'Launcher and crash logs'
+$launcher = "$RPCS3\coop-launcher.ps1"
+if (Test-Path "$PSScriptRoot\coop-launcher.ps1") {
+    if ($PSScriptRoot -ne $RPCS3) { Copy-Item "$PSScriptRoot\coop-launcher.ps1" $launcher -Force }
+} else {
+    Invoke-WebRequest $LauncherUrl -OutFile $launcher
+}
+# RPCS3 rewrites its log each time it starts, and this starts it below: save the last session's log first
+try {
+    $saved = & $launcher -SaveOnly
+    if ($saved) { Ok "Saved RPCS3's log of the last session: $saved" }
+} catch {
+    Warn "Couldn't save RPCS3's log of the last session: $_"
+}
+$shell = New-Object -ComObject WScript.Shell
+$link = "$([Environment]::GetFolderPath('Desktop'))\Ratchet Co-op.lnk"
+$linkTarget = if (Test-Path $link) { $shell.CreateShortcut($link).TargetPath } else { '' }
+if ($linkTarget -like '*\Play Co-op.cmd') {
+    # The host's shortcut from setup-server.ps1: it starts the server too, then this launcher
+    if ((Test-Path $linkTarget) -and (Select-String -Path $linkTarget -Pattern 'coop-launcher' -Quiet)) {
+        Ok 'Wrote coop-launcher.ps1, which the "Ratchet Co-op" shortcut (Play Co-op.cmd) starts'
+    } else {
+        Warn 'Wrote coop-launcher.ps1. Run setup-server.ps1 again so the "Ratchet Co-op" shortcut uses it.'
+    }
+} elseif ($NoShortcut) {
+    Ok "Wrote coop-launcher.ps1"
+} else {
+    $shortcut = $shell.CreateShortcut($link)
+    $shortcut.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+    $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcher`""
+    $shortcut.WorkingDirectory = $RPCS3
+    $shortcut.IconLocation = "$RPCS3\rpcs3.exe,0"
+    # Minimized, so the hidden PowerShell window doesn't flash up
+    $shortcut.WindowStyle = 7
+    $shortcut.Save()
+    Ok 'Wrote coop-launcher.ps1 and a "Ratchet Co-op" shortcut on the Desktop that runs it'
+}
+Ok "The log of every session the launcher starts is kept in $RPCS3\coop-logs"
 
 if (-not (Test-Path "$RPCS3\config\config.yml")) {
     Write-Host '   Starting RPCS3 once so it sets itself up. Close its window (and the welcome window) when it has opened.'
@@ -188,6 +236,7 @@ if ($Username -or $Server) {
 }
 
 Step 'Done'
-Write-Host '   Start RPCS3 and double-click "Ratchet Multiplayer". Press Start; the host presses Circle to make a lobby,'
-Write-Host '   the guest picks it with Cross and presses Circle. Full guide:'
+Write-Host '   Start the game with the "Ratchet Co-op" shortcut on the Desktop. Press Start; the host presses Circle to'
+Write-Host '   make a lobby, the guest picks it with Cross and presses Circle. Full guide:'
 Write-Host '   https://github.com/adamlbunch/rac1-multiplayer'
+Write-Host "   If the game crashes, send the newest zip in $RPCS3\coop-logs (its name ends in -crash)."

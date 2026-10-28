@@ -47,6 +47,7 @@ updates the mod and keeps their settings, then check the table.
 | Networking on | `$RPCS3\config\config.yml`, section `Net:` | `Internet enabled: Connected` |
 | Private network between the two PCs | Tailscale | `tailscale ping <other PC's 100.x IP>` answers |
 | Co-op server (host only) | e.g. `$HOME\Emulators\Lawrence` | log says `Started Lawrence on 0.0.0.0:2407` |
+| Launcher that keeps crash logs | `$RPCS3\coop-launcher.ps1`, run by the "Ratchet Co-op" Desktop shortcut | file exists |
 
 ## Fast path: the setup scripts
 
@@ -55,7 +56,7 @@ steps for whatever they report as missing (system software, the game, Tailscale)
 
 ```powershell
 # Both players: finds RPCS3 (-InstallRPCS3 downloads it if there's none), checks the system software and the game,
-#  installs the latest mod, turns networking on, and saves the name and server address
+#  installs the latest mod, turns networking on, saves the name and server address, and adds the launcher
 Invoke-WebRequest https://raw.githubusercontent.com/adamlbunch/rac1-multiplayer/main/setup/install-coop.ps1 -OutFile "$env:TEMP\install-coop.ps1"
 powershell -ExecutionPolicy Bypass -File "$env:TEMP\install-coop.ps1" -RPCS3 "C:\path\to\RPCS3" -Username "TheirName" -Server "100.x.y.z"
 
@@ -67,6 +68,9 @@ powershell -ExecutionPolicy Bypass -File "$env:TEMP\setup-server.ps1" -RPCS3 "C:
 - `install-coop.ps1` opens RPCS3 to install the package, and RPCS3 asks "Do you want to install this package?". The
   user clicks Install, then closes RPCS3 when it's done (on a first start RPCS3 shows a welcome window first, which
   they close). Pass `-Username` and `-Server` (the host uses `127.0.0.1`) so it doesn't stop to ask.
+- It also puts `coop-launcher.ps1` in the RPCS3 folder and a "Ratchet Co-op" shortcut on the Desktop that runs it
+  (`-NoShortcut` skips the shortcut). The launcher boots the mod and keeps RPCS3's log of each session, see
+  [Crashes](#crashes). On the host, `setup-server.ps1` makes "Ratchet Co-op" start the server first, then the launcher.
 - `setup-server.ps1` needs Git and a .NET SDK 8 or newer. It asks before installing them, or `-InstallTools` installs
   them without asking (only with the user's OK). `-AddFirewallRule` lets the server through Windows Firewall, which
   needs an administrator PowerShell. Run it again to update the server; settings and the saved campaign are kept.
@@ -248,8 +252,9 @@ The game adds a `userid` line itself. If a `settings.conf` is already there, cha
 
 ## 10. Playing
 
-1. Host: run `Play Co-op.cmd`. Guest: start RPCS3 and double-click "Ratchet Multiplayer", or run
-   `rpcs3.exe "$RPCS3\dev_hdd0\game\BORD00001\USRDIR\EBOOT.BIN"`.
+1. Both: double-click "Ratchet Co-op" on the Desktop (the host's also starts the server). Without it: the host runs
+   `Play Co-op.cmd`, the guest `$RPCS3\coop-launcher.ps1`. Starting RPCS3 any other way works too, but then the
+   session's log is only kept if the launcher runs before RPCS3 is opened again (see [Crashes](#crashes)).
 2. Both press Start. Without `settings.conf`: enter a username, then **Circle → Direct IP**, and enter `127.0.0.1`
    (host) or the host's Tailscale IP (guest).
 3. Host: **Circle** to create a lobby, and enter a password or leave it blank. The **Campaign** option continues the
@@ -274,6 +279,20 @@ The game adds a `userid` line itself. If a `settings.conf` is already there, cha
 | Can't connect to the server | `Internet enabled: Connected` missing (step 5); server not running; firewall (step 8.5); wrong IP or port; `tailscale ping` fails |
 | Server window waits for "Server Name" | `settings.toml` has no `name` (step 8.3) |
 | The server says the mod is out of date | That player has the official mod or an older release: repeat step 4 |
+
+### Crashes
+
+RPCS3 rewrites `$RPCS3\log\RPCS3.log` every time it starts, so a crash's log is lost once RPCS3 is opened again.
+`coop-launcher.ps1` keeps it: when RPCS3 closes, it zips the session's `RPCS3.log` and `TTY.log` with a
+`session.txt` summary into `$RPCS3\coop-logs\<date>_<time>.zip`. The name ends in `-crash` if the game hit a fatal
+error (an RPCS3 log line starting `·F`) or RPCS3 didn't exit cleanly. It keeps the newest 30. A session RPCS3 was
+opened for some other way is saved the next time the launcher or `install-coop.ps1` runs, as long as RPCS3 wasn't
+opened again in between. Errors of the launcher itself go to `coop-logs\launcher-errors.txt`.
+
+After a crash, close RPCS3 (it stays open on the error) and send the newest `-crash` zip to whoever maintains the mod,
+along with what was happening: planet, what the players were doing, and whether the other player's game crashed too.
+If the game was started without the launcher, save its log before opening RPCS3 again:
+`powershell -ExecutionPolicy Bypass -File "$RPCS3\coop-launcher.ps1" -SaveOnly`.
 
 ## Linux and macOS
 
