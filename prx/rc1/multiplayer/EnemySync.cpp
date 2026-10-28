@@ -373,16 +373,17 @@ static void choose_host() {
 // The game's enemies go after the player in the globals the game keeps of them: where they are (and the points a
 //  little above that they aim at), which way they face, their moby, their state and health. While the update of an
 //  enemy we run for everyone goes after another player, those are that player's.
+//
+// Those are all in the game's player block, and what an enemy does to the player it goes after lands there too: some
+//  push them, knock them into a hurt state or take health off them themselves (the hits WorldSync sends are what
+//  reaches the other player). None of that is for our player, so the whole block is as it was after the update.
 #define PLAYER_AIM_POINTS ((Vec4*)0x969da0)
+#define PLAYER_BLOCK ((u8*)0x969ce0)
+#define PLAYER_BLOCK_SIZE 0x2320
 
 struct AimSwap {
     bool active;
-    Vec4 position;
-    Vec4 rotation;
-    Vec4 aim_points[2];
-    Moby* ratchet;
-    s32 state;
-    s32 health;
+    u8 block[PLAYER_BLOCK_SIZE] __attribute__((aligned(16)));
     Moby* hero;
     u16 hero_mode_bits;
 };
@@ -443,13 +444,7 @@ static void aim_at(u16 target) {
     }
 
     aim_swap_.active = true;
-    aim_swap_.position = player_pos;
-    aim_swap_.rotation = player_rot;
-    aim_swap_.aim_points[0] = PLAYER_AIM_POINTS[0];
-    aim_swap_.aim_points[1] = PLAYER_AIM_POINTS[1];
-    aim_swap_.ratchet = ratchet_moby;
-    aim_swap_.state = player_state;
-    aim_swap_.health = player_health;
+    memcpy(aim_swap_.block, PLAYER_BLOCK, PLAYER_BLOCK_SIZE);
     aim_swap_.hero = hero;
     aim_swap_.hero_mode_bits = hero->mode_bits;
 
@@ -480,13 +475,7 @@ static void aim_back() {
         return;
     }
 
-    player_pos = aim_swap_.position;
-    player_rot = aim_swap_.rotation;
-    PLAYER_AIM_POINTS[0] = aim_swap_.aim_points[0];
-    PLAYER_AIM_POINTS[1] = aim_swap_.aim_points[1];
-    ratchet_moby = aim_swap_.ratchet;
-    player_state = aim_swap_.state;
-    player_health = aim_swap_.health;
+    memcpy(PLAYER_BLOCK, aim_swap_.block, PLAYER_BLOCK_SIZE);
 
     // What it did to them (hid them while it holds them, say) is up to their own game, see WorldSync for its hits
     aim_swap_.hero->mode_bits = aim_swap_.hero_mode_bits;
@@ -1210,7 +1199,7 @@ Moby* EnemySync::updating() {
 }
 
 Moby* EnemySync::own_hero() {
-    return aim_swap_.active ? aim_swap_.ratchet : ratchet_moby;
+    return aim_swap_.active ? *(Moby**)(aim_swap_.block + ((u8*)&ratchet_moby - PLAYER_BLOCK)) : ratchet_moby;
 }
 
 static void log_summary() {
