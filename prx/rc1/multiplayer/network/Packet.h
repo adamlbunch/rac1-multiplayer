@@ -680,6 +680,7 @@ typedef struct {
     u8 n_movers;
     u8 pad;
     u32 frame;            // Sender's frame counter, see MPPacketEnemyState
+    u32 rank;             // Sender's rank, see MPPacketEnemyState: which game sends a mover players are as near to
 } MPPacketMovers;
 
 // A bit for each of the variables a mover's state carries at most (see MoverSync's VARS_MAX)
@@ -702,6 +703,8 @@ typedef struct {
 #define MP_MOVER_WORD_SENDER_PLAYER 1     // The address of the sender's player's moby, `value` bytes into it
 #define MP_MOVER_WORD_SENDER_POSITION 2   // The address of where the sender's player is
 #define MP_MOVER_WORD_SENDER_ROTATION 3   // The address of which way the sender's player faces
+#define MP_MOVER_WORD_MOBY_BYTE 4         // A byte of the moby itself, `offset` into it (see MoverSync's ExtraWord)
+#define MP_MOVER_WORD_HALF 5              // A halfword of its variables, in the low half of `value`
 
 #define MP_LEVEL_CONFIG_OPTION_BLOCK_MOBY_UID   1
 #define MP_LEVEL_CONFIG_OPTION_BLOCK_OCLASS     2
