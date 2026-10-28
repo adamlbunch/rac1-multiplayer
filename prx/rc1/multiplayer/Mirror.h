@@ -106,6 +106,12 @@ struct Mirror {
     // How far the nearest other player we're showing is from `position`, squared. Huge if there's nobody.
     static float nearest_player_distance_sq(const Vec4* position);
 
+    // The IDs of the other players we're showing, up to `max` of them
+    static int shown_players(u16* uuids, int max);
+
+    // Where another player we're showing is and which way they face this frame, false if we aren't showing them
+    static bool player_position(u16 uuid, Vec4* position, Vec4* rotation);
+
     // The number of the snapshot of our player we sent last
     static u32 sent_frame();
 

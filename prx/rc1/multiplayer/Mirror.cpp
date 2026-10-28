@@ -1224,6 +1224,33 @@ float Mirror::nearest_player_distance_sq(const Vec4* position) {
     return nearest;
 }
 
+int Mirror::shown_players(u16* uuids, int max) {
+    int n = 0;
+
+    for (int i = 0; i < MIRROR_MAX_PLAYERS && n < max; i++) {
+        if (remote_players_[i].active && remote_players_[i].showing) {
+            uuids[n++] = remote_players_[i].uuid;
+        }
+    }
+
+    return n;
+}
+
+bool Mirror::player_position(u16 uuid, Vec4* position, Vec4* rotation) {
+    RemotePlayer* remote = find_remote(uuid);
+    if (remote == nullptr || !remote->showing) {
+        return false;
+    }
+
+    position->x = remote->hero_state.position[0];
+    position->y = remote->hero_state.position[1];
+    position->z = remote->hero_state.position[2];
+    rotation->x = remote->hero_state.rotation[0];
+    rotation->y = remote->hero_state.rotation[1];
+    rotation->z = remote->hero_state.rotation[2];
+    return true;
+}
+
 u32 Mirror::sent_frame() {
     return frame_;
 }
