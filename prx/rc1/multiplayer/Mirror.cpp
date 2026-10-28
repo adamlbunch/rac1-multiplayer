@@ -43,6 +43,11 @@ static Moby* spawned_[MP_MIRROR_MAX_SPAWNED];
 static u16 spawned_classes_[MP_MIRROR_MAX_SPAWNED];
 static int next_spawned_ = 0;
 
+// The snapshot each was spawned after. One spawned during a frame first updates in the next, after that frame's
+//  snapshot: until then it's still in the state it was spawned in, which the game never draws and some classes are
+//  drawn very differently in (an explosion's fireball as a huge red dome over the whole screen).
+static u32 spawned_frames_[MP_MIRROR_MAX_SPAWNED];
+
 // A copy of something spawned that hasn't been in a frame we showed for this many ticks is gone
 #define SPAWNED_TIMEOUT 30
 
@@ -516,6 +521,11 @@ void Mirror::send_snapshot(Client* client) {
             continue;
         }
 
+        // Not updated yet (see spawned_frames_)
+        if (frame_ <= spawned_frames_[i] + 1) {
+            continue;
+        }
+
         capture(&spawned[n_spawned++], moby, MP_MIRROR_SLOT_SPAWNED + i);
     }
     hero.state = n_spawned;
@@ -551,6 +561,7 @@ void Mirror::on_spawned(Moby* moby, bool by_player, Moby* spawner) {
         if (other == nullptr || other == moby || !valid_moby(other) || other->o_class != (short)spawned_classes_[i]) {
             spawned_[i] = moby;
             spawned_classes_[i] = moby->o_class;
+            spawned_frames_[i] = frame_;
             next_spawned_ = (i + 1) % MP_MIRROR_MAX_SPAWNED;
             return;
         }
@@ -930,6 +941,10 @@ void Mirror::on_tick() {
                     remote->spawned_mobys[index] = moby;
                     remote->spawned_models[index] = model;
                     remote->spawned_animation[index].valid = false;
+
+                    // Set up from the snapshot now: it may be drawn before its first update, and fresh out of
+                    //  spawning it's at the world's origin in state 0
+                    update_attachment(moby);
                 }
             }
         }

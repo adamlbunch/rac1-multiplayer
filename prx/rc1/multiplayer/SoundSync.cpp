@@ -223,7 +223,7 @@ void SoundSync::end_frame() {
     n_outgoing_stops_ = 0;
 }
 
-static void play(u16 sender, MPSoundEvent* event);
+static bool play(u16 sender, MPSoundEvent* event);
 
 void SoundSync::receive(MPPacketSounds* packet, size_t len) {
     if (packet->sender == 0 || game_state != PlayerControl ||
@@ -295,24 +295,25 @@ static void stop_replayed(int handle) {
     replayed->used = false;
 }
 
-static void play(u16 sender, MPSoundEvent* event) {
+// False if it's about a moby we have no copy of
+static bool play(u16 sender, MPSoundEvent* event) {
     if (event->flags & MP_SOUND_FLAG_STOP) {
         for (int handle = 0; handle < SOUND_CHANNELS; handle++) {
             if (replayed_[handle].used && replayed_[handle].sender == sender && replayed_[handle].event == event->event) {
                 stop_replayed(handle);
             }
         }
-        return;
+        return true;
     }
 
     Moby* moby = resolve(sender, event);
     if (moby == nullptr) {
-        return;
+        return false;
     }
 
     s32 handle = _c_play_sound(event->function, event->index, event->sound_flags, moby, event->sound_class);
     if (handle < 0 || handle >= SOUND_CHANNELS) {
-        return;
+        return true;
     }
 
     // Our own bookkeeping of the channel is about whatever played on it before
@@ -324,6 +325,7 @@ static void play(u16 sender, MPSoundEvent* event) {
     replayed->event = event->event;
     replayed->moby = moby;
     replayed->index = event->index;
+    return true;
 }
 
 void SoundSync::on_tick() {
@@ -351,7 +353,16 @@ void SoundSync::on_tick() {
             continue;
         }
 
-        play(queued->sender, &queued->event);
+        // Something their weapons just spawned only comes with the frame after it first updated (see Mirror), so a
+        //  sound it made in that update waits a frame for it
+        bool spawned = !(queued->event.flags & MP_SOUND_FLAG_ENEMY_FRAME) &&
+                       queued->event.target == MP_SOUND_TARGET_ATTACHMENT &&
+                       queued->event.slot >= MP_MIRROR_SLOT_SPAWNED;
+        if (!play(queued->sender, &queued->event) && spawned && showing && shown <= queued->event.frame &&
+            ticks_ - queued->tick <= SOUND_MAX_WAIT) {
+            continue;
+        }
+
         queued->used = false;
     }
 
