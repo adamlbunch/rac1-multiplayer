@@ -45,9 +45,12 @@
 // A game that stopped sending a mover for this many ticks has left it to us
 #define SENDER_TIMEOUT 120
 
-// We show another game's movers this many frames behind the newest state we have from it, like its enemies (see
-//  EnemySync)
+// We show another game's movers this many frames behind where that game is, like its enemies (see EnemySync)
 #define MOVER_DELAY 3
+
+// A game whose states come this many frames behind where we counted it to be stood still meanwhile: we go by its
+//  frames again
+#define SENDER_BEHIND 10
 
 #define MAX_OUTGOING 32
 
@@ -188,7 +191,7 @@ struct Mover {
 struct MoverSender {
     bool active;
     u16 uuid;
-    u32 newest_frame;
+    u32 newest_frame;       // Where its game is now, as far as we can tell: its newest frame, counted on since
     u32 playback_frame;
     u32 last_packet_tick;
 };
@@ -1164,11 +1167,15 @@ void MoverSync::receive(MPPacketMovers* packet, size_t len) {
         return;
     }
 
-    if (packet->frame > sender->newest_frame) {
-        if (sender->newest_frame == 0) {
-            sender->playback_frame = packet->frame - MOVER_DELAY;
-        }
+    // Further along than we counted (see on_tick), or well behind: it stood still a while (a menu, a cutscene). A
+    //  little behind, its game runs a little slower than ours: we count a frame less.
+    if (sender->newest_frame == 0) {
+        sender->playback_frame = packet->frame - MOVER_DELAY;
+    }
+    if (packet->frame > sender->newest_frame || packet->frame + SENDER_BEHIND < sender->newest_frame) {
         sender->newest_frame = packet->frame;
+    } else if (packet->frame + 1 < sender->newest_frame) {
+        sender->newest_frame -= 1;
     }
     sender->last_packet_tick = ticks_;
 
@@ -1245,7 +1252,10 @@ void MoverSync::receive(MPPacketMovers* packet, size_t len) {
 void MoverSync::on_tick() {
     ticks_ += 1;
 
-    // Play back one frame of each other game per frame, a few frames behind its newest, catching up if we fall behind
+    // Play back one frame of each other game per frame, a few frames behind where it is, catching up if we fall behind.
+    //  It sends only on the frames it has a state due, every few frames, so we count its frames on in between. Held at
+    //  its newest frame, the playback stood still until the next one came, a state then came in after its mover here
+    //  had moved on, and put it back: Novalis' bobbing platforms hitched every few seconds.
     for (int i = 0; i < MAX_SENDERS; i++) {
         MoverSender* sender = &senders_[i];
         if (!sender->active) {
@@ -1257,6 +1267,7 @@ void MoverSync::on_tick() {
             continue;
         }
 
+        sender->newest_frame += 1;
         sender->playback_frame += 1;
         if (sender->newest_frame > sender->playback_frame + MOVER_DELAY + 4) {
             sender->playback_frame = sender->newest_frame - MOVER_DELAY;
