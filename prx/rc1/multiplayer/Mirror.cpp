@@ -19,6 +19,21 @@
 // Frames of snapshots we keep in hand before showing one. Smooths over packets arriving unevenly.
 #define MIRROR_DELAY 3
 
+// Over the internet snapshots arrive less evenly, and showing the last one again while the next is late (then
+//  skipping ahead) makes the player stutter, most of all when falling. Each time we run out we let ourselves fall a
+//  frame further behind, up to this, and a frame less again after a while without running out.
+#define MIRROR_MAX_DELAY 10
+#define MIRROR_CALM_TICKS 600
+
+// Further behind than we let ourselves fall for this long, we show two frames in one tick to catch up. Further
+//  behind than MIRROR_MAX_BEHIND (the snapshot we'd show could be gone from the buffer), we skip ahead in one go.
+#define MIRROR_CATCH_UP_TICKS 30
+#define MIRROR_MAX_BEHIND (MIRROR_MAX_DELAY + 4)
+
+#if MIRROR_MAX_BEHIND + 2 > MIRROR_BUFFER_FRAMES
+#error "The buffer must hold the frames we may fall behind by, and one either side to make up lost ones from"
+#endif
+
 // Without snapshots for this many frames, a player goes back to being drawn from regular moby updates
 #define MIRROR_TIMEOUT 60
 
@@ -694,6 +709,7 @@ void Mirror::receive(MPPacketPlayerState* packet, size_t len) {
                 remote->uuid = packet->sender;
                 remote->newest_frame = packet->frame;
                 remote->playback_frame = packet->frame > MIRROR_DELAY ? packet->frame - MIRROR_DELAY : 0;
+                remote->delay = MIRROR_DELAY;
                 break;
             }
         }
@@ -782,6 +798,45 @@ void Mirror::receive(MPPacketPlayerState* packet, size_t len) {
     }
 }
 
+// The angle `t` of the way from `from` to `to`, turning the short way
+static float lerp_angle(float from, float to, float t) {
+    const float pi = 3.14159265f;
+
+    float delta = to - from;
+    while (delta > pi) {
+        delta -= 2 * pi;
+    }
+    while (delta < -pi) {
+        delta += 2 * pi;
+    }
+
+    return from + delta * t;
+}
+
+// Moves a snapshot's moby `t` of the way to its state in a later one: where it is, and how far along its animation
+//  if it's still between the same frames. Makes up a frame whose snapshot got lost from the ones either side of it.
+static void blend_toward(MPMirrorMoby* state, const MPMirrorMoby* next, float t) {
+    if (state->o_class != next->o_class) {
+        return;
+    }
+
+    for (int i = 0; i < 3; i++) {
+        state->position[i] += (next->position[i] - state->position[i]) * t;
+        state->rotation[i] = lerp_angle(state->rotation[i], next->rotation[i], t);
+    }
+
+    for (int i = 0; i < 12; i++) {
+        state->matrix[i] += (next->matrix[i] - state->matrix[i]) * t;
+    }
+    state->scale += (next->scale - state->scale) * t;
+
+    if (state->anim_seq == next->anim_seq && state->anim_prev_seq == next->anim_prev_seq &&
+        state->anim_frame0 == next->anim_frame0 && state->anim_frame1 == next->anim_frame1 &&
+        state->anim_restarts == next->anim_restarts) {
+        state->anim_t += (next->anim_t - state->anim_t) * t;
+    }
+}
+
 void Mirror::on_tick() {
     ticks_ += 1;
     GadgetModels::on_tick();
@@ -824,21 +879,52 @@ void Mirror::on_tick() {
             WorldSync::on_player_arrived();
         }
 
-        // Play back one sender frame per frame, a few frames behind the newest, catching up if we fall behind
-        remote->playback_frame += 1;
-        if (remote->newest_frame > remote->playback_frame + MIRROR_DELAY + 4) {
-            remote->playback_frame = remote->newest_frame - MIRROR_DELAY;
-        }
-        if (remote->playback_frame > remote->newest_frame) {
-            remote->playback_frame = remote->newest_frame;
+        // Play back one sender frame per frame, a few frames behind the newest (see MIRROR_MAX_DELAY)
+        u32 behind = remote->newest_frame - remote->playback_frame;
+        u32 step = 1;
+        if (behind > MIRROR_MAX_BEHIND) {
+            step = behind - remote->delay;
+            remote->ahead_ticks = 0;
+        } else if (behind > remote->delay + 1u) {
+            remote->ahead_ticks += 1;
+            if (remote->ahead_ticks >= MIRROR_CATCH_UP_TICKS) {
+                step = 2;
+                remote->ahead_ticks = 0;
+            }
+        } else {
+            remote->ahead_ticks = 0;
         }
 
+        remote->playback_frame += step;
+        if (remote->playback_frame > remote->newest_frame) {
+            remote->playback_frame = remote->newest_frame;
+
+            if (remote->delay < MIRROR_MAX_DELAY) {
+                remote->delay += 1;
+            }
+            remote->calm_ticks = 0;
+        } else if (++remote->calm_ticks >= MIRROR_CALM_TICKS) {
+            if (remote->delay > MIRROR_DELAY) {
+                remote->delay -= 1;
+            }
+            remote->calm_ticks = 0;
+        }
+
+        // The frame to show, or the one before it when its snapshot got lost, and then the one after it
         MirrorSnapshot* current = nullptr;
+        MirrorSnapshot* next = nullptr;
         for (int j = 0; j < MIRROR_BUFFER_FRAMES; j++) {
             MirrorSnapshot* snapshot = &remote->buffer[j];
-            if (snapshot->used && snapshot->has_hero && snapshot->frame <= remote->playback_frame &&
-                (current == nullptr || snapshot->frame > current->frame)) {
-                current = snapshot;
+            if (!snapshot->used || !snapshot->has_hero) {
+                continue;
+            }
+
+            if (snapshot->frame <= remote->playback_frame) {
+                if (current == nullptr || snapshot->frame > current->frame) {
+                    current = snapshot;
+                }
+            } else if (next == nullptr || snapshot->frame < next->frame) {
+                next = snapshot;
             }
         }
 
@@ -846,8 +932,19 @@ void Mirror::on_tick() {
             continue;
         }
 
+        // How far from the one before to the one after the frame we show is, to make up a lost one from the two
+        float fill = 0.0f;
+        if (current->frame < remote->playback_frame && next != nullptr) {
+            fill = (float)(remote->playback_frame - current->frame) / (float)(next->frame - current->frame);
+        } else {
+            next = nullptr;
+        }
+
         remote->showing = true;
         memcpy(&remote->hero_state, &current->hero, sizeof(MPMirrorMoby));
+        if (next != nullptr) {
+            blend_toward(&remote->hero_state, &next->hero, fill);
+        }
         remote->n_manipulators = current->n_manipulators;
         memcpy(remote->manipulator_state, current->manipulators, sizeof(remote->manipulator_state));
 
@@ -876,6 +973,9 @@ void Mirror::on_tick() {
 
             MPMirrorMoby* state = &current->attachment[slot];
             memcpy(&remote->attachment_state[slot], state, sizeof(MPMirrorMoby));
+            if (next != nullptr && (next->received & bit)) {
+                blend_toward(&remote->attachment_state[slot], &next->attachment[slot], fill);
+            }
 
             // Drawing a copy with a model that isn't loaded, or got swapped for another one, crashes the game
             MobyClass* model = attachment_model(remote, state->o_class);
@@ -923,6 +1023,9 @@ void Mirror::on_tick() {
 
             MPMirrorMoby* state = &current->spawned[index];
             memcpy(&remote->spawned_state[index], state, sizeof(MPMirrorMoby));
+            if (next != nullptr && (next->spawned_received & (1u << index))) {
+                blend_toward(&remote->spawned_state[index], &next->spawned[index], fill);
+            }
             remote->spawned_seen[index] = ticks_;
 
             MobyClass* model = attachment_model(remote, state->o_class);
