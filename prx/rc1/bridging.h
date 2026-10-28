@@ -42,6 +42,11 @@ bool _c_on_game_heap_full(u32* heap, s32 size, u32 caller);
 void _c_set_ratchet_animation_duration(u32 duration);
 
 void _c_bink_do_frame();
+
+bool _c_should_end_cutscene();
+void _c_on_movie_opened(const char* path);
+void _c_on_movie_playing(u32* skip_buttons);
+void _c_after_pads_read();
 void _c_on_save_operation(int action, void* savedata);
 
 #ifdef __cplusplus

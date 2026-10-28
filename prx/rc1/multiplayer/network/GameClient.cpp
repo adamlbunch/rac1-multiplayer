@@ -19,6 +19,7 @@
 #include "../EffectSync.h"
 #include "../SoundSync.h"
 #include "../MoverSync.h"
+#include "../CutsceneSync.h"
 #include "../SyncedMoby.h"
 #include "../GadgetModels.h"
 #include "../LevelMobys.h"
@@ -909,6 +910,9 @@ bool GameClient::update(MPPacketHeader *header, void *packet_data) {
                 break;
             case MP_PACKET_MOVERS:
                 MoverSync::receive((MPPacketMovers*)packet_data, header->size);
+                break;
+            case MP_PACKET_CUTSCENE_SKIPPED:
+                CutsceneSync::receive((MPPacketCutsceneSkipped*)packet_data, header->size);
                 break;
             default:
                 Logger::error("Received %ld bytes of unknown packet %d:", received(), header->type);

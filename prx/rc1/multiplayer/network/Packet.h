@@ -94,6 +94,7 @@ Here is an example of how a packet with type set to MP_PACKET_MOBY_UPDATE and no
 #define MP_PACKET_EFFECTS             38
 #define MP_PACKET_SOUNDS              39
 #define MP_PACKET_MOVERS              40
+#define MP_PACKET_CUTSCENE_SKIPPED    41
 
 #define MP_PACKET_FLAG_RPC           0x1
 
@@ -706,6 +707,18 @@ typedef struct {
 #define MP_MOVER_WORD_SENDER_ROTATION 3   // The address of which way the sender's player faces
 #define MP_MOVER_WORD_MOBY_BYTE 4         // A byte of the moby itself, `offset` into it (see MoverSync's ExtraWord)
 #define MP_MOVER_WORD_HALF 5              // A halfword of its variables, in the low half of `value`
+
+// The sender's player skipped a cutscene, so other games skip it too if they're watching the same one, see
+//  CutsceneSync
+typedef struct {
+    u16 sender;           // Filled in by the server, see MPPacketPlayerState
+    u8 kind;              // MP_CUTSCENE_*
+    u8 planet;            // The sender's
+    u32 id;               // Which: the level's number for the cutscene, or a hash of the movie's file name
+} MPPacketCutsceneSkipped;
+
+#define MP_CUTSCENE_LEVEL 0               // A cutscene played in the level (game state CutScene)
+#define MP_CUTSCENE_MOVIE 1               // A full-screen movie
 
 #define MP_LEVEL_CONFIG_OPTION_BLOCK_MOBY_UID   1
 #define MP_LEVEL_CONFIG_OPTION_BLOCK_OCLASS     2

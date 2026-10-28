@@ -71,6 +71,7 @@ SHK_FUNCTION_DEFINE_STATIC_3(0x4e8470, void, new_game, int, p1, void*, p2, u64, 
 SHK_FUNCTION_DEFINE_STATIC_2(0x0e0854, void*, load_gadget_weapon_model, void*, ptr, int, unk2);
 SHK_FUNCTION_DEFINE_STATIC_2(0xb72b0, u64, transition_to_movement_state, u32, state, u32, unk2);
 SHK_FUNCTION_DEFINE_STATIC_0(0x164c58, void, load_destination_planet);
+SHK_FUNCTION_DEFINE_STATIC_0(0x167a30, void, end_in_level_movie);
 SHK_FUNCTION_DEFINE_STATIC_1(0xccda0, void, toast_message, char*, message);
 SHK_FUNCTION_DEFINE_STATIC_1(0x112c20, void, unlock_planet, int, planet);
 SHK_FUNCTION_DEFINE_STATIC_4(0xdbc38, void, load_moby_model, u32**, addr, int, unk0, int, unk1, short, oClass);

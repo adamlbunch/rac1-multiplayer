@@ -139,3 +139,23 @@ replaced_instr = "stdu r1, -0x70(r1)"
 [_game_heap_alloc_up]
 addr = 0x4fe52c
 replaced_instr = "stdu r1, -0x70(r1)"
+
+[_update_in_level_movie]
+addr = 0x168768
+replaced_instr = "stdu r1, -0xd0(r1)"
+
+[_play_movie]
+addr = 0x16974c
+replaced_instr = "stdu r1, -0xa0(r1)"
+
+[_play_travel_movie]
+addr = 0x1643e0
+replaced_instr = "stdu r1, -0x160(r1)"
+
+[_open_movie]
+addr = 0x4d5448
+replaced_instr = "stdu r1, -0xa0(r1)"
+
+[_read_pads]
+addr = 0x11e2d4
+replaced_instr = "stdu r1, -0x90(r1)"

@@ -60,6 +60,49 @@ void start_in_level_movie(u32 movie) {
     SHK_CALL_HOOK(_start_in_level_movie, movie);
 }
 
+// Updates the cutscene played in the level (game state CutScene), each frame of it. It ends it on Start first thing.
+SHK_HOOK(void, _update_in_level_movie);
+void update_in_level_movie_hook() {
+    // Another player skipped it (see CutsceneSync): ended the same way
+    if (_c_should_end_cutscene()) {
+        end_in_level_movie();
+        return;
+    }
+
+    SHK_CALL_HOOK(_update_in_level_movie);
+}
+
+// Plays a full-screen movie (game state Movie) to its end, or until Start is held
+SHK_HOOK(void, _play_movie);
+void play_movie_hook() {
+    _c_on_movie_playing((u32*)&held_buttons);
+    SHK_CALL_HOOK(_play_movie);
+    _c_on_movie_playing(nullptr);
+}
+
+// Plays a story movie while the next planet loads, until Start is pressed
+SHK_HOOK(void, _play_travel_movie, s32);
+void play_travel_movie_hook(s32 movie) {
+    _c_on_movie_playing((u32*)&pressed_buttons);
+    SHK_CALL_HOOK(_play_travel_movie, movie);
+    _c_on_movie_playing(nullptr);
+}
+
+// Opens a movie's file for the game's movie player
+SHK_HOOK(u32, _open_movie, void*, const char*, s32, s32);
+u32 open_movie_hook(void* player, const char* path, s32 unk, s32 flags) {
+    _c_on_movie_opened(path);
+    return SHK_CALL_HOOK(_open_movie, player, path, unk, flags);
+}
+
+// Reads the pads into pressed_buttons and held_buttons: each frame, and in each frame of a movie
+SHK_HOOK(u64, _read_pads);
+u64 read_pads_hook() {
+    u64 ret = SHK_CALL_HOOK(_read_pads);
+    _c_after_pads_read();
+    return ret;
+}
+
 SHK_HOOK(void, on_respawn);
 void on_respawn_hook() {
     SHK_CALL_HOOK(on_respawn);
@@ -571,6 +614,11 @@ void rc1_init() {
     SHK_BIND_HOOK(authenticate_game, authenticate_game_hook);
     SHK_BIND_HOOK(FUN_000784e8, FUN_000784e8_hook);
     SHK_BIND_HOOK(_start_in_level_movie, _start_in_level_movie_hook);
+    SHK_BIND_HOOK(_update_in_level_movie, update_in_level_movie_hook);
+    SHK_BIND_HOOK(_play_movie, play_movie_hook);
+    SHK_BIND_HOOK(_play_travel_movie, play_travel_movie_hook);
+    SHK_BIND_HOOK(_open_movie, open_movie_hook);
+    SHK_BIND_HOOK(_read_pads, read_pads_hook);
     SHK_BIND_HOOK(on_respawn, on_respawn_hook);
     SHK_BIND_HOOK(cellGameBootCheck, cellGameBootCheckHook);
     SHK_BIND_HOOK(cellGameContentPermit, cellGameContentPermitHook);
