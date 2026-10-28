@@ -223,7 +223,7 @@ void SoundSync::end_frame() {
     n_outgoing_stops_ = 0;
 }
 
-static void play(u16 sender, MPSoundEvent* event);
+static bool play(u16 sender, MPSoundEvent* event);
 
 void SoundSync::receive(MPPacketSounds* packet, size_t len) {
     if (packet->sender == 0 || game_state != PlayerControl ||
