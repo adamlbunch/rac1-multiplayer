@@ -57,8 +57,9 @@ typedef void (*MobyUpdateFunction)(Moby*);
 #define LISTEN_MAX_TICKS 180
 
 // How long an enemy that came out here waits for the host's states before this game runs it for everyone: the host's
-//  game doesn't have it (it's already gone there, or something only our player set off brought it out here)
-#define HOST_WAIT 45
+//  game doesn't have it (it's already gone there, or something only our player set off brought it out here). The
+//  host only sends one once it has seen it move on its own for a while (MOVING_FRAMES), like we do.
+#define HOST_WAIT 120
 
 // How much nearer another player has to be for an enemy to go after them instead of the one it's after
 #define TARGET_MARGIN 3.0f
@@ -154,6 +155,7 @@ static u8 blend_frames_[MAX_LEVEL_MOBYS];
 static u8 moving_frames_[MAX_LEVEL_MOBYS];
 static u8 updates_[MAX_LEVEL_MOBYS];        // How many times it ran, up to SETTLED_UPDATES
 static u8 waits_[MAX_LEVEL_MOBYS];          // Frames it waited for the host's states, up to HOST_WAIT
+static u8 from_host_[MAX_LEVEL_MOBYS / 8];  // Bit per moby the host sent us states of since we came to the level
 static u16 targets_[MAX_LEVEL_MOBYS];       // The player it goes after: OWNER_SELF, another player's ID, or none
 
 static u32 ticks_ = 0;
@@ -829,10 +831,12 @@ static bool before_update(Moby* moby) {
 
     // Another game hosts the enemies: one we know is an enemy waits for its states. If they don't come, the host's
     //  game doesn't have it, and ours runs it for everyone. Not while we don't know the host yet, or its player is
-    //  away: then it just waits.
+    //  away: then it just waits. So does one the host sent before: the host has it, it's just not running it right
+    //  now (it's out of everyone's reach there, or the host's game stalled for a moment).
     if (enemy == nullptr && !hosting() && host_elsewhere() && !(sync_off_ & SYNC_OFF_REMOTE_ENEMIES) &&
         (traits_[updating_index_] & TRAITS_ENEMY) == TRAITS_ENEMY && game_state == PlayerControl) {
-        bool waiting = host_ == OWNER_NONE || host_away();
+        bool sent_before = (from_host_[updating_index_ / 8] & (1 << (updating_index_ % 8))) != 0;
+        bool waiting = host_ == OWNER_NONE || host_away() || sent_before;
         if (waits_[updating_index_] < HOST_WAIT || waiting) {
             if (!waiting) {
                 waits_[updating_index_] += 1;
@@ -1414,6 +1418,9 @@ static void receive_state(EnemySender* sender_info, u32 frame, MPEnemyState* sta
     }
 
     waits_[index] = 0;
+    if (from_host) {
+        from_host_[index / 8] |= 1 << (index % 8);
+    }
 
     if (enemy == nullptr) {
         enemy = add_enemy(index, moby);
@@ -1637,6 +1644,7 @@ void EnemySync::on_spawned(Moby* moby) {
     blend_frames_[index] = 0;
     waits_[index] = 0;
     targets_[index] = OWNER_NONE;
+    from_host_[index / 8] &= ~(1 << (index % 8));
 }
 
 void EnemySync::reset() {
@@ -1674,6 +1682,7 @@ void EnemySync::reset() {
     memset(updates_, 0, sizeof(updates_));
     memset(waits_, 0, sizeof(waits_));
     memset(targets_, 0, sizeof(targets_));
+    memset(from_host_, 0, sizeof(from_host_));
 
     updating_ = nullptr;
     updating_index_ = -1;
