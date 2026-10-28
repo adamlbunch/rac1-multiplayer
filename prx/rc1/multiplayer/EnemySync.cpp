@@ -317,6 +317,7 @@ static bool playing() {
 //  stays with us until it's gone, the host's game doesn't have it.
 static void leave_enemies_to(u16 host) {
     host_ = host;
+    memset(waits_, 0, sizeof(waits_));
 
     for (int i = 0; i < MAX_ENEMIES; i++) {
         SyncedEnemy* enemy = &enemies_[i];
@@ -824,11 +825,13 @@ static bool before_update(Moby* moby) {
     }
 
     // Another game hosts the enemies: one we know is an enemy waits for its states. If they don't come, the host's
-    //  game doesn't have it, and ours runs it for everyone.
+    //  game doesn't have it, and ours runs it for everyone. Not while we don't know the host yet, or its player is
+    //  away: then it just waits.
     if (enemy == nullptr && !hosting() && host_elsewhere() && !(sync_off_ & SYNC_OFF_REMOTE_ENEMIES) &&
         (traits_[updating_index_] & TRAITS_ENEMY) == TRAITS_ENEMY && game_state == PlayerControl) {
-        if (waits_[updating_index_] < HOST_WAIT || host_away()) {
-            if (!host_away()) {
+        bool waiting = host_ == OWNER_NONE || host_away();
+        if (waits_[updating_index_] < HOST_WAIT || waiting) {
+            if (!waiting) {
                 waits_[updating_index_] += 1;
             }
             return false;
