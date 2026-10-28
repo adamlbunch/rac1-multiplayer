@@ -63,6 +63,9 @@ typedef void (*MobyUpdateFunction)(Moby*);
 // How much nearer another player has to be for an enemy to go after them instead of the one it's after
 #define TARGET_MARGIN 3.0f
 
+// How far another game's camera can be from its player, see add_remote_enemies
+#define CAMERA_MARGIN 24.0f
+
 // Enemies no other player is this near get sent only every few frames, and other games move them smoothly from one
 //  to the next. With the frames we show them behind, the next state is there by the time it's needed.
 #define STREAM_RADIUS 150.0f
@@ -1099,7 +1102,8 @@ static Moby* add_remote_enemies(Moby* list) {
     }
 
     // While we host, what could be an enemy runs here near the other players too, the way the game runs it near our
-    //  camera: within its update distance. Their games wait for our states of it.
+    //  camera: within its update distance. Their games wait for our states of it. They go by their camera, which can
+    //  be a way off from the player we know the position of, so a bit further.
     if (hosting()) {
         u16 players[MIRROR_MAX_PLAYERS];
         Vec4 positions[MIRROR_MAX_PLAYERS];
@@ -1117,7 +1121,7 @@ static Moby* add_remote_enemies(Moby* list) {
                 continue;
             }
 
-            float reach = (float)(u8)moby->update_distance;
+            float reach = (float)(u8)moby->update_distance + CAMERA_MARGIN;
             for (int i = 0; i < n; i++) {
                 float dx = positions[i].x - moby->position.x;
                 float dy = positions[i].y - moby->position.y;
