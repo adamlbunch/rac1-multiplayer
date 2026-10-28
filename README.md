@@ -261,6 +261,8 @@ The game adds a `userid` line itself. If a `settings.conf` is already there, cha
    saved campaign or starts a new one (the old one is kept).
 4. Guest: pick the lobby with **Cross**, then **Circle** to get ready. Host: **Circle** to start.
 5. Joining a game that's already going: pick the lobby marked "In game", **Cross**, then **Circle**.
+6. A cutscene or movie you're both watching (the opening, arriving on a planet together): either player's **Start**
+   skips it for both.
 
 ## Updating
 
