@@ -164,6 +164,11 @@ rem Starts the co-op server (if it isn't running yet) and boots the co-op mod in
 cd /d "%~dp0"
 tasklist /fi "imagename eq Lawrence.exe" | find /i "Lawrence.exe" >nul
 if errorlevel 1 start "Ratchet Co-op Server" "%~dp0Start Co-op Server.cmd"
+rem install-coop.ps1's launcher boots it too, and keeps RPCS3's log of every session in coop-logs
+if not exist "$RPCS3\coop-launcher.ps1" goto direct
+start "" /min powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$RPCS3\coop-launcher.ps1"
+goto :eof
+:direct
 start "" "$RPCS3\rpcs3.exe" "$RPCS3\dev_hdd0\game\BORD00001\USRDIR\EBOOT.BIN"
 
 "@

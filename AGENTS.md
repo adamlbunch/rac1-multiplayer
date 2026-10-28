@@ -44,3 +44,18 @@ does, and needs:
 
 `make` writes `build/BDUPS3-BORD00001_00-0000000000000000.pkg` and `build/PS3_GAME/USRDIR`, which RPCS3 can boot
 directly. Later builds update `PS3_GAME`. Restart the game in RPCS3 to load them.
+
+## Players' crash logs
+
+Players start the game with `setup/coop-launcher.ps1` (the "Ratchet Co-op" shortcut), which zips RPCS3's log of each
+session into `$RPCS3\coop-logs` (README, "Crashes"). In a zip:
+
+- `session.txt`: when RPCS3 started, its exit code, the SHA256 of the `mod.sprx` that was installed, and the first
+  fatal lines. Releases from version tags carry their `mod.sprx` and `mod.map`
+  (`gh release download <tag> -p mod.sprx -p mod.map`); the installed file is byte-identical to the build's, so the
+  hash finds the release, and that release's `mod.map` reads the mod's addresses.
+- `RPCS3.log`: the whole session. The mod's own log lines are there as `sys_tty_write()` lines. A crash is a `·F`
+  line (for example `VM: Access violation reading location 0x8`), and right before it RPCS3 writes the thread's
+  context ("main_thread's thread context:"): registers, call stack and the code around the crash. The registers are
+  reliable, but frames past the first few of the call stack can be stale.
+- `TTY.log`: just the mod's log lines.
