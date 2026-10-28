@@ -65,6 +65,9 @@ struct EnemySync {
     // The frame of our moby update loop, which the enemy states we send are numbered by
     static u32 frame();
 
+    // Our game's random number, which settles which game runs what players are about as near to
+    static u32 rank();
+
     // Which of a game's frames we're showing its enemies at, false if it doesn't send us any
     static bool shown_frame(u16 sender, u32* frame);
 

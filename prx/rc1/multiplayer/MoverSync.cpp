@@ -37,15 +37,20 @@
 #define MID_RADIUS 90.0f
 #define NEAR_RADIUS 150.0f
 
-// A game that's this much nearer to a mover than the one sending it takes it over
+// Players about this near to a mover are as near, and the games' ranks settle which one sends it (see EnemySync).
+//  Both games used to leave it to the other then, each took the other's state, and they swapped it back and forth
+//  every SENDER_TIMEOUT for as long as the players stood together.
 #define TIE_DISTANCE 2.0f
 
 // A game that stopped sending a mover for this many ticks has left it to us
 #define SENDER_TIMEOUT 120
 
-// We show another game's movers this many frames behind the newest state we have from it, like its enemies (see
-//  EnemySync)
+// We show another game's movers this many frames behind where that game is, like its enemies (see EnemySync)
 #define MOVER_DELAY 3
+
+// A game whose states come this many frames behind where we counted it to be stood still meanwhile: we go by its
+//  frames again
+#define SENDER_BEHIND 10
 
 #define MAX_OUTGOING 32
 
@@ -179,12 +184,14 @@ struct Mover {
     MirrorAnimation animation;
 
     u32 sent_tick;          // When we last sent its state
+
+    u32 sender_rank;        // Of the game sending it, see TIE_DISTANCE
 };
 
 struct MoverSender {
     bool active;
     u16 uuid;
-    u32 newest_frame;
+    u32 newest_frame;       // Where its game is now, as far as we can tell: its newest frame, counted on since
     u32 playback_frame;
     u32 last_packet_tick;
 };
@@ -289,6 +296,55 @@ static bool copyable(u32 value) {
 //  members on a moby without variables and that game crashed. Those only go once its own code changes them.
 static bool sent_unchanged(u32 value) {
     return copyable(value) && !whole_number(value);
+}
+
+// Some movers' code keeps what it's doing where the words we send don't carry it: in a byte of the moby itself, or a
+//  timer that shares its word with other bytes (see whole_number). A state from another game put one where it is
+//  there, and its own code carried on from where it was here: Novalis' bobbing platforms jumped to the other game's
+//  height, then rose or sank from there on their own schedule. They're known by the code their update runs, which
+//  is what decides where it keeps what.
+struct ExtraWord {
+    u32 update;
+    u16 kind;       // MP_MOVER_WORD_MOBY_BYTE, MP_MOVER_WORD_HALF, or MP_MOVER_WORD_VALUE for a word of its variables
+                    //  we send every time, not only once it's no longer what the level set it to
+    u16 offset;
+};
+
+static const ExtraWord extra_words_[] = {
+    // Novalis' bobbing platforms (classes 703 and 715): waiting low, waiting high or moving (0xbc), the frames until
+    //  the next of those (0xa6), and how far they go each frame, up or down (0xac)
+    {0x429290, MP_MOVER_WORD_MOBY_BYTE, 0xbc},
+    {0x429290, MP_MOVER_WORD_HALF, 0xa6},
+    {0x429290, MP_MOVER_WORD_VALUE, 0xac},
+};
+
+#define N_EXTRA_WORDS (sizeof(extra_words_) / sizeof(extra_words_[0]))
+
+// The code its update runs (p_update is the function's descriptor), or 0
+static u32 update_code(Moby* moby) {
+    u32 descriptor = (u32)moby->p_update;
+    if (descriptor < 0x10000 || descriptor >= 0x1800000) {
+        return 0;
+    }
+
+    return *(u32*)descriptor;
+}
+
+static bool is_extra_word(Moby* moby, u16 kind, u16 offset) {
+    u32 update = update_code(moby);
+    for (u32 i = 0; i < N_EXTRA_WORDS; i++) {
+        if (extra_words_[i].update == update && extra_words_[i].kind == kind && extra_words_[i].offset == offset) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// The kinds of words that are about the sender's player, see player_reference
+static bool about_player(u16 kind) {
+    return kind == MP_MOVER_WORD_SENDER_PLAYER || kind == MP_MOVER_WORD_SENDER_POSITION ||
+           kind == MP_MOVER_WORD_SENDER_ROTATION;
 }
 
 // How other games know an address in its variables that's about our player: our player's moby, where they are or
@@ -437,6 +493,17 @@ static Mover* add_mover(int index, Moby* moby, u16 uid) {
         if (mover->vars_size > 0) {
             memcpy(mover->baseline, moby->vars, mover->vars_size);
         }
+
+        // The words its code needs every time count as changed from the start
+        u32 update = update_code(moby);
+        for (u32 e = 0; e < N_EXTRA_WORDS; e++) {
+            u16 offset = extra_words_[e].offset;
+            if (extra_words_[e].update == update && extra_words_[e].kind == MP_MOVER_WORD_VALUE &&
+                offset + 4 <= mover->vars_size) {
+                mover->changed[offset / 4 / 32] |= 1u << ((offset / 4) % 32);
+            }
+        }
+
         slots_[index] = i + 1;
         return mover;
     }
@@ -467,10 +534,24 @@ static MoverSender* find_sender(u16 uuid, bool add) {
     return nullptr;
 }
 
-// Another game is sending it and its player is nearer than ours, or as near
+// Whether a player this far from a mover is nearer to it than another: clearly nearer, or about as near and their
+//  game's rank is lower
+static bool nearer(float distance, u32 rank, float other_distance, u32 other_rank) {
+    if (distance < other_distance - TIE_DISTANCE) {
+        return true;
+    }
+
+    if (distance > other_distance + TIE_DISTANCE) {
+        return false;
+    }
+
+    return rank < other_rank;
+}
+
+// Another game is sending it and its player is nearer than ours
 static bool sent_by_other(Mover* mover, float distance) {
     return mover->sender != 0 && ticks_ - mover->received_tick < SENDER_TIMEOUT &&
-           distance >= mover->sender_distance - TIE_DISTANCE;
+           nearer(mover->sender_distance, mover->sender_rank, distance, EnemySync::rank());
 }
 
 // Takes on another game's variables, leaving alone ours that point somewhere in our memory or hold a sound channel.
@@ -483,7 +564,7 @@ static bool apply_words(Mover* mover, Moby* moby, u16 sender, MPMoverWord* words
 
     Moby* copy = nullptr;
     for (int i = 0; i < n_words; i++) {
-        if (words[i].kind != MP_MOVER_WORD_VALUE) {
+        if (about_player(words[i].kind)) {
             copy = Mirror::hero_of(sender);
             if (copy == nullptr) {
                 return false;
@@ -494,6 +575,23 @@ static bool apply_words(Mover* mover, Moby* moby, u16 sender, MPMoverWord* words
 
     for (int i = 0; i < n_words; i++) {
         MPMoverWord* word = &words[i];
+
+        // What its code keeps elsewhere, if ours runs the same code
+        if (word->kind == MP_MOVER_WORD_MOBY_BYTE || word->kind == MP_MOVER_WORD_HALF) {
+            if (!is_extra_word(moby, word->kind, word->offset)) {
+                continue;
+            }
+
+            if (word->kind == MP_MOVER_WORD_MOBY_BYTE) {
+                ((u8*)moby)[word->offset] = (u8)word->value;
+            } else if (word->offset + 2 <= mover->vars_size && !holds_channel(mover, word->offset & ~3) &&
+                       !external(mover, word->offset & ~3)) {
+                u16 half = (u16)word->value;
+                memcpy(vars + word->offset, &half, 2);
+            }
+            continue;
+        }
+
         if (word->offset + 4 > mover->vars_size || holds_channel(mover, word->offset) ||
             external(mover, word->offset)) {
             continue;
@@ -547,7 +645,7 @@ static bool set_up_like_sender(Mover* mover, Moby* moby, const u32* pointers, MP
 
         bool comes_with_state = false;
         for (int i = 0; i < n_words && !comes_with_state; i++) {
-            comes_with_state = words[i].offset == offset && words[i].kind != MP_MOVER_WORD_VALUE;
+            comes_with_state = words[i].offset == offset && about_player(words[i].kind);
         }
         if (!comes_with_state) {
             return false;
@@ -633,6 +731,11 @@ void MoverSync::before_update(Moby* moby, int index) {
 
     // Umbris' swarms crashed following indexes their leader in the other game had given them
     note_external(mover, moby);
+
+    // Its update runs next, and after_update takes them again only in normal play: one from before a cutscene or a
+    //  vendor, compared after it, took what its own update did meanwhile for something else's writes (Novalis'
+    //  bobbing platforms stopped taking the other game's speed)
+    mover->after_update_valid = false;
 
     note_channels(mover, moby);
 
@@ -728,6 +831,33 @@ static void fill_state(Mover* mover, Moby* moby, float distance, OutgoingMover* 
     memset(out->head.pointers, 0, sizeof(out->head.pointers));
     u16 n_words = 0;
     u8* vars = (u8*)moby->vars;
+
+    // What its code keeps elsewhere, first, so it's always there
+    u32 update = update_code(moby);
+    for (u32 i = 0; i < N_EXTRA_WORDS && n_words < MAX_WORDS; i++) {
+        const ExtraWord* extra = &extra_words_[i];
+        if (extra->update != update) {
+            continue;
+        }
+
+        u32 value;
+        if (extra->kind == MP_MOVER_WORD_MOBY_BYTE) {
+            value = ((u8*)moby)[extra->offset];
+        } else if (extra->kind == MP_MOVER_WORD_HALF && vars != nullptr && extra->offset + 2 <= mover->vars_size &&
+                   !holds_channel(mover, extra->offset & ~3) && !external(mover, extra->offset & ~3)) {
+            u16 half;
+            memcpy(&half, vars + extra->offset, 2);
+            value = half;
+        } else {
+            continue;
+        }
+
+        out->words[n_words].offset = extra->offset;
+        out->words[n_words].kind = extra->kind;
+        out->words[n_words].value = value;
+        n_words += 1;
+    }
+
     for (u16 offset = 0; vars != nullptr && offset + 4 <= mover->vars_size; offset += 4) {
         if (holds_channel(mover, offset) || external(mover, offset)) {
             continue;
@@ -949,6 +1079,7 @@ static void send_movers(Client* client, OutgoingMover* outgoing, int n_outgoing,
         MPPacketMovers* body = (MPPacketMovers*)packet->body;
         body->n_movers = count;
         body->frame = frame;
+        body->rank = EnemySync::rank();
 
         u8* data = (u8*)body + sizeof(MPPacketMovers);
         for (int i = sent; i < sent + count; i++) {
@@ -1036,11 +1167,15 @@ void MoverSync::receive(MPPacketMovers* packet, size_t len) {
         return;
     }
 
-    if (packet->frame > sender->newest_frame) {
-        if (sender->newest_frame == 0) {
-            sender->playback_frame = packet->frame - MOVER_DELAY;
-        }
+    // Further along than we counted (see on_tick), or well behind: it stood still a while (a menu, a cutscene). A
+    //  little behind, its game runs a little slower than ours: we count a frame less.
+    if (sender->newest_frame == 0) {
+        sender->playback_frame = packet->frame - MOVER_DELAY;
+    }
+    if (packet->frame > sender->newest_frame || packet->frame + SENDER_BEHIND < sender->newest_frame) {
         sender->newest_frame = packet->frame;
+    } else if (packet->frame + 1 < sender->newest_frame) {
+        sender->newest_frame -= 1;
     }
     sender->last_packet_tick = ticks_;
 
@@ -1083,11 +1218,17 @@ void MoverSync::receive(MPPacketMovers* packet, size_t len) {
             continue;
         }
 
-        // Our player is clearly nearer: ours to send, and theirs to take once they see it
+        // Our player is nearer: ours to send, and theirs to take once they see it
         float dx = ratchet_moby->position.x - moby->position.x;
         float dy = ratchet_moby->position.y - moby->position.y;
         float dz = ratchet_moby->position.z - moby->position.z;
-        if (square_root(dx * dx + dy * dy + dz * dz) < head->moby.distance - TIE_DISTANCE) {
+        if (nearer(square_root(dx * dx + dy * dy + dz * dz), EnemySync::rank(), head->moby.distance, packet->rank)) {
+            continue;
+        }
+
+        // A game whose player is nearer still sends it too: this one stops once it hears from that one
+        if (mover->sender != 0 && mover->sender != packet->sender && ticks_ - mover->received_tick < SENDER_TIMEOUT &&
+            nearer(mover->sender_distance, mover->sender_rank, head->moby.distance, packet->rank)) {
             continue;
         }
 
@@ -1097,6 +1238,7 @@ void MoverSync::receive(MPPacketMovers* packet, size_t len) {
 
         mover->sender = packet->sender;
         mover->sender_distance = head->moby.distance;
+        mover->sender_rank = packet->rank;
         mover->received_tick = ticks_;
         mover->pending = true;
         mover->frame = packet->frame;
@@ -1110,7 +1252,10 @@ void MoverSync::receive(MPPacketMovers* packet, size_t len) {
 void MoverSync::on_tick() {
     ticks_ += 1;
 
-    // Play back one frame of each other game per frame, a few frames behind its newest, catching up if we fall behind
+    // Play back one frame of each other game per frame, a few frames behind where it is, catching up if we fall behind.
+    //  It sends only on the frames it has a state due, every few frames, so we count its frames on in between. Held at
+    //  its newest frame, the playback stood still until the next one came, a state then came in after its mover here
+    //  had moved on, and put it back: Novalis' bobbing platforms hitched every few seconds.
     for (int i = 0; i < MAX_SENDERS; i++) {
         MoverSender* sender = &senders_[i];
         if (!sender->active) {
@@ -1122,6 +1267,7 @@ void MoverSync::on_tick() {
             continue;
         }
 
+        sender->newest_frame += 1;
         sender->playback_frame += 1;
         if (sender->newest_frame > sender->playback_frame + MOVER_DELAY + 4) {
             sender->playback_frame = sender->newest_frame - MOVER_DELAY;

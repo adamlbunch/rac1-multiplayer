@@ -1341,6 +1341,10 @@ u32 EnemySync::frame() {
     return frame_;
 }
 
+u32 EnemySync::rank() {
+    return rank_;
+}
+
 bool EnemySync::shown_frame(u16 sender, u32* frame) {
     for (int i = 0; i < MAX_SENDERS; i++) {
         if (senders_[i].active && senders_[i].uuid == sender) {

@@ -7,7 +7,9 @@
 //  game whose player is nearest to one sends its state now and then: where it is, its animation, and its variables
 //  that aren't what the level started them at. The other games put it in that state at the frame they show of that
 //  game, so it carries on from exactly there. Their own variables that point somewhere in their memory are left
-//  alone: those differ from game to game.
+//  alone: those differ from game to game. A few keep what they're doing elsewhere too (a byte of the moby, a timer
+//  sharing its word with other bytes): those go along for the movers listed by the code of their update. Players
+//  about as near to one settle which game sends it by their games' ranks, like enemies (see EnemySync).
 //
 // The same goes for things that don't move but change their state while the level runs: doors opening, buttons,
 //  bridges, hazards going off. Those also take on the state of the game whose player is nearest, once they've been
