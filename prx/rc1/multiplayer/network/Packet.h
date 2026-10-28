@@ -623,7 +623,8 @@ typedef struct {
 //  the game's own effect records, which hold everything about the effect in world coordinates, so other games make
 //  the same ones and the game animates them the same way.
 //
-// Followed by `n_effects` effect records of MP_EFFECT_SIZE bytes.
+// Followed by `n_effects` effect records of MP_EFFECT_SIZE bytes, then a u16 per record saying which of its words
+//  hold a moby as other games know it (bit n: bytes 4n to 4n+3, see EffectSync).
 #define MP_EFFECT_SIZE 64
 
 typedef struct {
