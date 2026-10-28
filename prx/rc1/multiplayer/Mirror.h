@@ -2,7 +2,8 @@
 // Draws other players exactly like their own games do. Every frame each game sends a snapshot of its hero moby
 //  (animation frame and blend, bone manipulators, transform, lighting) and of everything attached to the player:
 //  the item in their hand, packs, helmets, boots and so on. Other games buffer a few frames of snapshots to smooth
-//  out the network and replay them one per frame on their copy of the player.
+//  out the network and replay them one per frame on their copy of the player, waiting longer for them over a
+//  connection that delivers them unevenly.
 //
 
 #ifndef RAC1_MULTIPLAYER_MIRROR_H
@@ -18,7 +19,7 @@
 struct Client;
 
 #define MIRROR_MAX_PLAYERS 4
-#define MIRROR_BUFFER_FRAMES 8
+#define MIRROR_BUFFER_FRAMES 16
 
 struct MirrorSnapshot {
     u32 frame;
@@ -50,6 +51,12 @@ struct RemotePlayer {
     u32 playback_frame;
     u32 last_packet_tick;
     MirrorSnapshot buffer[MIRROR_BUFFER_FRAMES];
+
+    // How many frames behind their newest snapshot we may fall before catching up, which grows while their snapshots
+    //  keep arriving later than we wait for them (see Mirror::on_tick)
+    u8 delay;
+    u8 ahead_ticks;     // Ticks in a row we've been further behind than that
+    u16 calm_ticks;     // Ticks since we last ran out of snapshots
 
     // What we show this frame, copied out of the buffer so packets arriving can't change it under us
     bool showing;
