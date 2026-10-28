@@ -1,17 +1,24 @@
 //
 // Every game runs the level's enemies on its own, so left alone each player fights their own copy of every enemy:
-//  somewhere else, chasing whoever is in its own game. Instead, each enemy is run by one player's game at a time,
-//  normally the game of the player nearest to it. That game runs it like it always does and sends its state every
-//  frame: where it is, which way it's facing, its animation and the state its AI is in. The other games don't run its
-//  AI and draw it from that state instead, a few frames behind to smooth out the network, like other players (see
-//  Mirror).
+//  somewhere else, chasing whoever is in its own game. Instead, one game runs them all, the host of the level: the
+//  first game on the level, for as long as it's there. It runs them like it always does and sends their state every
+//  frame: where they are, which way they face, their animation and the state their AI is in. The other games don't
+//  run their AI and draw them from those states instead, a few frames behind to smooth out the network, like other
+//  players (see Mirror).
 //
-// A game takes over the enemies its player is nearest to. When two games both send an enemy, the one whose player is
-//  nearer keeps it. A game that stops sending an enemy (its player went away, or left) leaves it to the others.
+// An enemy's AI keeps more than its state (timers, where it's headed, what it's about to do) in variables of its own,
+//  which can't be copied to another game: they hold addresses and table positions that are different there. So an
+//  enemy stays in the game that runs it. It only moves to another when the host leaves the level, or when the host's
+//  game doesn't have it (it's already gone there, or something only another player set off brought it out): then the
+//  game that has it runs it for everyone, until the host's states of it come.
+//
+// The game's enemies go after the player in its globals. The host's game runs the enemies near other players too, and
+//  while each one's update runs, those globals are the nearest player's, so it goes after them like it would in
+//  their own game. What it hits on them there, they take in their game (see WorldSync).
 //
 // Hits still reach every game (see WorldSync), so health and deaths are the same everywhere. A game that doesn't run
 //  an enemy lets it react to hits on its own, so it flinches, dies and drops its bolts there too. Whatever damage it
-//  does meanwhile is undone, since that enemy is fighting someone in another game.
+//  does meanwhile is undone, since that enemy is fighting in another game.
 //
 // What counts as an enemy: a moby placed in the level, or spawned by one (see SpawnedMobys), that reads the damage
 //  done to it, moves on its own and has an update that can hurt something (see AttackerUpdates.h).
@@ -50,11 +57,23 @@ struct EnemySync {
     // The moby whose update is running, or null
     static Moby* updating();
 
+    // Our player's moby. ratchet_moby is another player's copy while an enemy goes after them (see update_mobys).
+    static Moby* own_hero();
+
     static void on_tick(Client* client);
     static void receive(MPPacketEnemyState* packet, size_t len);
 
     // Whether our game runs this moby for everyone
     static bool is_owned(Moby* moby);
+
+    // Whether it's an enemy our game runs for everyone, or spawned by one (a shot): what it hits is hit everywhere
+    static bool runs_for_everyone(Moby* moby);
+
+    // The random number our game goes by, see MPPacketEnemyState
+    static u32 rank();
+
+    // The rank of the game whose player this moby is our copy of, 0 if it's no player's or we don't know theirs
+    static u32 player_rank(Moby* moby);
 
     // Whether this moby is drawn from another game's states, or reacting to a hit in its own way meanwhile
     static bool is_remote(Moby* moby);

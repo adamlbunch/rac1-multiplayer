@@ -80,7 +80,7 @@ static bool channel_plays(s32 handle, Moby* moby, s16 index) {
 static bool describe(Moby* moby, MPSoundEvent* event) {
     event->frame = Mirror::sent_frame();
 
-    if (moby == ratchet_moby) {
+    if (moby == EnemySync::own_hero()) {
         event->target = MP_SOUND_TARGET_HERO;
         return true;
     }

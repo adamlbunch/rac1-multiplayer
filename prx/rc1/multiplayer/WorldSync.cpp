@@ -230,9 +230,79 @@ static void forget_remote_hit(Moby* moby) {
     }
 }
 
+static void fill_hit(MPPacketMobyHit* hit, u8* record) {
+    memcpy(&hit->vector0, record + 0x00, sizeof(Vec4));
+    memcpy(&hit->vector1, record + 0x10, sizeof(Vec4));
+    memcpy(&hit->flags, record + 0x24, sizeof(u32));
+    hit->field28 = record[0x28];
+    hit->field29 = record[0x29];
+    memcpy(&hit->field2a, record + 0x2a, sizeof(u16));
+    memcpy(&hit->damage, record + 0x2c, sizeof(float));
+    memcpy(&hit->field30, record + 0x30, sizeof(u32));
+}
+
+// When we last sent a hit on each other player, by their game's rank
+#define MAX_HIT_PLAYERS 4
+#define PLAYER_HIT_INTERVAL 10
+static u32 hit_player_ranks_[MAX_HIT_PLAYERS];
+static u32 hit_player_ticks_[MAX_HIT_PLAYERS];
+
+// An enemy we run for everyone hit another player's copy here (see EnemySync): the hit is on them, in their game.
+//  Their game takes a hit like it takes any: it decides whether it hurts (they may still be flashing from the last).
+//  An enemy can land one every frame on a copy, which nothing makes flash, so they go a few frames apart.
+static void send_player_hit(Client* client, u8* record, Moby* source, u32 target_rank) {
+    MobyKey source_key;
+    if (!key_of(source, &source_key)) {
+        return;
+    }
+
+    int slot = 0;
+    for (int i = 0; i < MAX_HIT_PLAYERS; i++) {
+        if (hit_player_ranks_[i] == target_rank) {
+            slot = i;
+            break;
+        }
+
+        if (hit_player_ticks_[i] < hit_player_ticks_[slot]) {
+            slot = i;
+        }
+    }
+
+    if (hit_player_ranks_[slot] == target_rank && ticks_ - hit_player_ticks_[slot] < PLAYER_HIT_INTERVAL) {
+        return;
+    }
+
+    hit_player_ranks_[slot] = target_rank;
+    hit_player_ticks_[slot] = ticks_;
+
+    Packet* packet = new Packet(sizeof(MPPacketMobyHit));
+    packet->header->type = MP_PACKET_MOBY_HIT;
+
+    MPPacketMobyHit* hit = (MPPacketMobyHit*)packet->body;
+    memset(hit, 0, sizeof(MPPacketMobyHit));
+    fill_hit(hit, record);
+    hit->source_uid = source_key.uid;
+    hit->source_o_class = source_key.o_class;
+    hit->source_spawn = source_key.spawn;
+    hit->target_rank = target_rank;
+
+    Logger::debug("WorldSync: moby %d/%d (o_class %d) hit another player for %d", source_key.uid, source_key.spawn,
+                  source_key.o_class, (int)hit->damage);
+
+    client->send_ack(packet);
+}
+
 static void send_record(Client* client, u8* record) {
     Moby* target = *(Moby**)(record + 0x34);
     Moby* source = *(Moby**)(record + 0x20);
+
+    u32 target_rank = EnemySync::player_rank(target);
+    if (target_rank != 0) {
+        if (EnemySync::runs_for_everyone(source)) {
+            send_player_hit(client, record, source, target_rank);
+        }
+        return;
+    }
 
     // The target can already be gone if the hit destroyed it right away (crates), but it's still where it was
     MobyKey target_key;
@@ -275,14 +345,8 @@ static void send_record(Client* client, u8* record) {
     hit->source_uid = from_enemy ? source_key.uid : 0;
     hit->source_o_class = from_enemy ? source_key.o_class : 0xffff;
     hit->source_spawn = from_enemy ? source_key.spawn : 0;
-    memcpy(&hit->vector0, record + 0x00, sizeof(Vec4));
-    memcpy(&hit->vector1, record + 0x10, sizeof(Vec4));
-    memcpy(&hit->flags, record + 0x24, sizeof(u32));
-    hit->field28 = record[0x28];
-    hit->field29 = record[0x29];
-    memcpy(&hit->field2a, record + 0x2a, sizeof(u16));
-    memcpy(&hit->damage, record + 0x2c, sizeof(float));
-    memcpy(&hit->field30, record + 0x30, sizeof(u32));
+    hit->target_rank = 0;
+    fill_hit(hit, record);
 
     client->send_ack(packet);
 
@@ -531,9 +595,21 @@ void WorldSync::on_tick(Client* client) {
 
 void WorldSync::receive_hit(MPPacketMobyHit* hit, size_t len) {
     // Older games only send hits on mobys placed in the level, made by their player
-    bool full = len >= sizeof(MPPacketMobyHit);
+    bool full = len >= MP_MOBY_HIT_V15_SIZE;
 
-    Moby* target = SpawnedMobys::find(hit->uid, full ? hit->spawn : 0, hit->o_class);
+    // An enemy another game runs hit a player there: ours, or someone else's
+    Moby* target = nullptr;
+    bool on_player = len >= sizeof(MPPacketMobyHit) && hit->target_rank != 0;
+    if (on_player) {
+        if (hit->target_rank != EnemySync::rank()) {
+            return;
+        }
+
+        target = ratchet_moby;
+    } else {
+        target = SpawnedMobys::find(hit->uid, full ? hit->spawn : 0, hit->o_class);
+    }
+
     if (target == nullptr) {
         return;
     }
@@ -548,7 +624,17 @@ void WorldSync::receive_hit(MPPacketMobyHit* hit, size_t len) {
     }
 
     if (source == nullptr) {
+        // Our player hit by itself would be knocked back from where it stands
+        if (on_player) {
+            return;
+        }
+
         source = ratchet_moby;
+    }
+
+    if (on_player) {
+        Logger::debug("WorldSync: moby %d/%d (o_class %d) in player %d's game hit us for %d", hit->source_uid,
+                      hit->source_spawn, hit->source_o_class, hit->sender, (int)hit->damage);
     }
 
     // Fill in the next damage record exactly like the game does

@@ -551,10 +551,15 @@ typedef struct {
     //  The UID is then the spawner's. 0 for mobys placed in the level.
     u16 spawn;
     u16 source_spawn;
+    // Not 0: the hit was on another player, the one whose game has this rank (see MPPacketEnemyState). An enemy the
+    //  sender's game hosts hit that player's copy there, so the hit is theirs to take; uid, o_class and spawn are 0.
+    //  Older games don't send it.
+    u32 target_rank;
 } MPPacketMobyHit;
 
 // What older games send of MPPacketMobyHit
-#define MP_MOBY_HIT_V14_SIZE (sizeof(MPPacketMobyHit) - 8)
+#define MP_MOBY_HIT_V14_SIZE (sizeof(MPPacketMobyHit) - 12)
+#define MP_MOBY_HIT_V15_SIZE (sizeof(MPPacketMobyHit) - 4)
 
 // One of the level's mobys a player had damaged is gone in their game. Backs up MPPacketMobyHit for kills that
 //  don't come down to damage the other games could apply.
@@ -580,22 +585,29 @@ typedef struct {
     u8 pad;
 } MPMobyAnimation;
 
-// The level's enemies are run by one player's game at a time, normally the one of the player nearest to them. That
-//  game sends their state every frame, and the others draw them from it instead of running them. The server passes
-//  it on to the other players on the level.
+// The level's enemies are all run by one player's game, the host of the level (see EnemySync.h). It sends their
+//  state every frame, and the others draw them from it instead of running them. Every game sends one of these every
+//  frame, with or without enemies, so the others know it's there and which player it plays. The server passes it on
+//  to the other players on the level.
 //
 // Followed by `n_enemies` MPEnemyState, each followed by MPEnemyMatrix if it has MP_ENEMY_FLAG_MATRIX.
 typedef struct {
     u16 sender;           // Filled in by the server, see MPPacketPlayerState
     u8 n_enemies;
-    u8 pad;
+    u8 flags;             // MP_ENEMY_PACKET_*
     u32 frame;            // Sender's frame counter
-    u32 rank;             // Random number of the sender's game, which settles who runs an enemy players are as near to
+    u32 rank;             // Random number of the sender's game: settles which game hosts when two do, and names it
+                          //  in MPPacketMobyHit
+    // The sender's player, which the host's enemies go after when they're nearest to them
+    s32 player_state;
+    s32 player_health;
 } MPPacketEnemyState;
 
+#define MP_ENEMY_PACKET_HOST  0x1   // The sender's game runs the level's enemies
+#define MP_ENEMY_PACKET_AWAY  0x2   // The sender's player isn't playing right now (a menu, a cutscene): its game sends
+                                    //  no enemies, and the host's should wait for it to come back
+
 #define MP_ENEMY_FLAG_MATRIX  0x1   // The moby sets its own transform rather than have the game build it
-#define MP_ENEMY_FLAG_CLAIM   0x2   // Not a state: the sender's player is nearer and asks to run the enemy instead
-#define MP_ENEMY_FLAG_HANDOFF 0x4   // The last state of the enemy in the sender's game, which hands it to the claimant
 #define MP_ENEMY_FLAG_SPAWNED 0x8   // Spawned by an enemy the sender runs (a shot, debris): games without it make a copy
 #define MP_ENEMY_FLAG_STATE   0x10  // A mover whose own state changes while the level runs: take on its state too
 #define MP_ENEMY_FLAG_TRANSITION 0x20  // A mover's state just changed by itself, from pad[0] to `state`: change it too
@@ -608,7 +620,7 @@ typedef struct {
     u8 state;             // The moby's own state, the one its AI runs on
     u8 alpha;
     u8 pad[3];
-    float distance;       // How far the sender's player is from it, to settle which game runs it
+    float distance;       // How far the sender's player is from it (for movers: settles which game keeps it in step)
     float position[3];
     float rotation[3];
     float scale;
