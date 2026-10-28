@@ -63,7 +63,9 @@ struct RemoteHit {
 static HitMoby hit_mobys_[MAX_HIT_MOBYS];
 static PendingKill pending_kills_[MAX_PENDING_KILLS];
 
-// Mobys another player's game recorded as gone for good, which we give a moment to go away on their own here first
+// Mobys another player's game recorded as gone for good, which we give a moment to go away on their own here first.
+//  Not all of them go away there: Novalis' stalactites record themselves once they've fallen and stay on the floor, so
+//  one that changed its state here since (it fell here too, see MoverSync) is doing what it did there, and stays.
 #define MAX_PENDING_REMOVALS 64
 #define REMOVAL_GRACE_TICKS (60 * 5)
 
@@ -71,6 +73,8 @@ struct PendingRemoval {
     bool used;
     u16 uid;
     u32 deadline;
+    bool seen;
+    s8 state;   // Its state here when we first looked after the record came
 };
 
 static PendingRemoval pending_removals_[MAX_PENDING_REMOVALS];
@@ -464,6 +468,7 @@ void WorldSync::on_gone_for_good(int level, int offset, u8 before, u8 after) {
                 pending_removals_[i].used = true;
                 pending_removals_[i].uid = uid;
                 pending_removals_[i].deadline = ticks_ + REMOVAL_GRACE_TICKS;
+                pending_removals_[i].seen = false;
                 break;
             }
         }
@@ -483,8 +488,20 @@ static void apply_pending_removals() {
             continue;
         }
 
+        if (!removal->seen) {
+            removal->seen = true;
+            removal->state = moby->state;
+        }
+
         if ((s32)(ticks_ - removal->deadline) >= 0) {
             removal->used = false;
+            if (moby->state != removal->state) {
+                Logger::debug("WorldSync: leaving moby %d (o_class %d) another player's game recorded as gone for "
+                              "good, it went from state %d to %d here", removal->uid, moby->o_class, removal->state,
+                              moby->state);
+                continue;
+            }
+
             if (!safe_to_remove(moby)) {
                 Logger::debug("WorldSync: leaving moby %d (o_class %d) another player's game recorded as gone for "
                               "good, others hold on to it", removal->uid, moby->o_class);
