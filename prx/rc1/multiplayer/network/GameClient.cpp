@@ -36,9 +36,19 @@ GameClient::GameClient(char *ip, int port) : Client(ip, port) {
     }
 
     connection_complete_ = false;
+
+    lost_reason_ = nullptr;
+    reconnecting_ = false;
+    reconnect_attempts_ = 0;
+    shown_reconnect_attempts_ = -1;
+    next_reconnect_time_ = 0;
+    last_check_time_ = 0;
 }
 
 void GameClient::disconnect() {
+    reconnecting_ = false;
+    lost_reason_ = nullptr;
+
     Client::disconnect();
 
     if (ratchet_moby == nullptr && current_planet == 0) {
@@ -52,6 +62,13 @@ void GameClient::disconnect() {
 }
 
 void GameClient::reset() {
+    end_session();
+
+    Client::reset();
+}
+
+// Forgets everything the server set up for this session: its UI, other players' mobys, what we sync, the data stream
+void GameClient::end_session() {
     waiting_for_connect_ = false;
     connection_complete_ = false;
 
@@ -60,7 +77,15 @@ void GameClient::reset() {
     }
 
     clear_hybrid_mobys();
-    moby_delete_all();
+
+    // While a level loads, the mobys we spawned are gone with the old level, and a new level's moby can be where one
+    //  of them was. Deleting would take that one out.
+    if (game_state == PlanetLoading) {
+        moby_clear_all();
+    } else {
+        moby_delete_all();
+    }
+
     WorldSync::reset();
     EnemySync::reset();
     EffectSync::reset();
@@ -76,7 +101,108 @@ void GameClient::reset() {
 
     close_data_client();
 
-    Client::reset();
+    // What the server asked of our saves was for this session. A server we get back to sends its own again.
+    Game::shared().autosave_pending = false;
+    Game::shared().force_load_save_file = false;
+    Game::shared().have_save_file = false;
+    Game::shared().manual_save_enabled = false;
+}
+
+static bool on_title_screen() {
+    return ratchet_moby == nullptr && current_planet == 0;
+}
+
+// The server answers our time requests every few seconds, and sends much more while we play
+#define SERVER_SILENCE_TIMEOUT_MS (10 * 1000)
+// How long we wait between tries to reach a server we lost. A try itself gives up after 5 seconds (Client::on_tick).
+#define RECONNECT_INTERVAL_MS (3 * 1000)
+
+void GameClient::check_server() {
+    // Time we didn't run (a load that doesn't draw, a blocking alert) isn't the server being quiet: we weren't asking
+    //  it anything. What it sent meanwhile is read first anyway (Client::on_tick receives before this).
+    int64_t now = get_time();
+    if (last_check_time_ != 0 && now - last_check_time_ > 1000) {
+        last_receive_time_ += now - last_check_time_;
+    }
+    last_check_time_ = now;
+
+    if (lost_reason_ != nullptr) {
+        const char* reason = lost_reason_;
+        lost_reason_ = nullptr;
+
+        lose_server(reason);
+    } else if (connected() && handshake_complete() && get_time() - last_receive_time() > SERVER_SILENCE_TIMEOUT_MS) {
+        if (connection_complete_) {
+            lose_server("the server stopped answering");
+        } else {
+            // It did the handshake, but never answered our connect
+            on_connect_timeout();
+        }
+    }
+
+    if (reconnecting_ && !connected() && get_time() >= next_reconnect_time_) {
+        reconnect_attempts_ += 1;
+        next_reconnect_time_ = get_time() + RECONNECT_INTERVAL_MS;
+
+        Logger::info("Trying to reconnect to the co-op server (try %d)", reconnect_attempts_);
+        reset();
+    }
+}
+
+void GameClient::lose_server(const char* reason) {
+    Logger::error("Lost the co-op server: %s", reason);
+
+    String message = String::format("Lost the connection to the co-op server: %s.\n\n"
+            "Your game reconnects to it by itself once it's back. Then rejoin your game from the lobby list. "
+            "Until then, nothing you do is shared with the other players or saved.", reason);
+    Game::shared().alert(message);
+
+    end_session();
+    Client::disconnect();
+
+    reconnecting_ = true;
+    reconnect_attempts_ = 0;
+    shown_reconnect_attempts_ = -1;
+    next_reconnect_time_ = get_time() + RECONNECT_INTERVAL_MS;
+}
+
+void GameClient::on_connect_timeout() {
+    if (!reconnecting_) {
+        Client::on_connect_timeout();
+        return;
+    }
+
+    // Not back yet
+    close_socket();
+    next_reconnect_time_ = get_time() + RECONNECT_INTERVAL_MS;
+}
+
+void GameClient::show_reconnect_status() {
+    if (remote_view_ == nullptr || Game::shared().current_view != remote_view_) {
+        return;
+    }
+
+    if (!reconnecting_) {
+        if (shown_reconnect_attempts_ != -1) {
+            shown_reconnect_attempts_ = -1;
+            remote_view_->set_status("");
+        }
+        return;
+    }
+
+    if (shown_reconnect_attempts_ == reconnect_attempts_) {
+        return;
+    }
+    shown_reconnect_attempts_ = reconnect_attempts_;
+
+    // On the title screen there's nothing else to do, so the player can give up on it there
+    String status = reconnect_attempts_ > 0 ?
+            String::format("Reconnecting to the co-op server (try %d)", reconnect_attempts_) :
+            String("Lost the co-op server");
+    if (on_title_screen()) {
+        status = String::format("%s   \x12 Stop", status.c_str());
+    }
+    remote_view_->set_status(status.c_str());
 }
 
 void GameClient::close_data_client() {
@@ -762,12 +888,26 @@ void GameClient::update_level_configuration(MPPacketSetLevelConfiguration* packe
 static Profiler client_update_timer_("client update");
 static Profiler game_update_timer_("game update");
 bool GameClient::update(MPPacketHeader *header, void *packet_data) {
+    // Once we're in, the server only says it doesn't know us when it restarted, or dropped us and forgot
+    if (header->type == MP_PACKET_IDKU && connection_complete_) {
+        lost_reason_ = "the server restarted or forgot this game";
+        return false;
+    }
+
     {
         Profiler::Scope scope(&client_update_timer_);
 
         if (!Client::update(header, packet_data)) {
             return false;
         }
+    }
+
+    // It dropped us: it heard nothing from us for a while
+    if (header->type == MP_PACKET_DISCONNECT) {
+        if (connection_complete_) {
+            lost_reason_ = "the server stopped hearing from this game";
+        }
+        return false;
     }
 
     {
@@ -944,6 +1084,11 @@ int GameClient::connect_callback(void* packetData, size_t size, void* userdata) 
         Logger::info("Connection successfully established!");
         self->connection_complete_ = true;
 
+        if (self->reconnecting_) {
+            Logger::info("Back on the co-op server after %d tries", self->reconnect_attempts_);
+            self->reconnecting_ = false;
+        }
+
         return 0;
     }
 
@@ -986,6 +1131,8 @@ void GameClient::on_tick() {
 
         Client::on_tick();
     }
+
+    check_server();
 
     if (!remote_view_ || (connected() && Game::shared().current_view != remote_view_)) {
         bool lost_ui = remote_view_ != nullptr;
@@ -1040,7 +1187,19 @@ void GameClient::on_tick() {
 
     ticks_ += 1;
 
-    if (connected() && !handshake_complete()) {
+    show_reconnect_status();
+
+    if (reconnecting_ && on_title_screen() && (pressed_buttons & Triangle)) {
+        disconnect();
+        return;
+    }
+
+    // Between tries to reach a lost server, or after disconnecting
+    if (!connected()) {
+        return;
+    }
+
+    if (!handshake_complete()) {
         send_handshake();
 
         // Wait until next game tick to receive handshake response and start doing actual stuff

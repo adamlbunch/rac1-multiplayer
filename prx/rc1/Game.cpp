@@ -62,6 +62,7 @@ void Game::init() {
     have_save_file = false;
     manual_save_enabled = false;
     autosave_pending = false;
+    save_level_pending_ = false;
 
     previous_user_option_camera_left_right_movement = -1;
     previous_user_option_camera_up_down_movement = -1;
@@ -175,7 +176,8 @@ void Game::on_tick() {
     // Player is most likely on intro menu scene. Present and handle multiplayer startup stuff.
     //  Once connected, the server's UI (the lobby screens) lives in the client's remote view, which must stay up:
     //  deleting it here as the game started loading lost the lobby screen's close, leaving it stuck on screen.
-    if (current_planet == 0 && ratchet_moby == 0 && !(client_ && client_->connected())) {
+    //  The same while we try to get back to a server we lost: the view shows that, and the client still uses it.
+    if (current_planet == 0 && ratchet_moby == 0 && !(client_ && (client_->connected() || client_->reconnecting()))) {
         if (current_view && game_state == 0) {
             delete current_view;
             current_view = 0;
@@ -201,10 +203,19 @@ void Game::on_tick() {
             load();
         }
 
+        // A save we loaded only takes us to its level when that loads. Until then the game's memory is the save's
+        //  progress on the level we were on, so saving would send the server a mix of both: wait until we spawned
+        //  there (before_player_spawn), or a while in control in case that never came.
+        if (save_level_pending_ && !should_load_destination_planet && game_state == PlayerControl &&
+            get_time() - save_loaded_time_ > 60 * 1000) {
+            Logger::error("Never spawned in the level of the save we loaded, saving again anyway");
+            save_level_pending_ = false;
+        }
+
         // The game builds its save in place, so saving again while the last one is still being sent would send a mix
         //  of both. And not before we've loaded the save the server told us to, or while loading a level.
-        if (autosave_pending && !force_load_save_file && data_ready && !data_client->busy() &&
-            game_state == PlayerControl) {
+        if (autosave_pending && !force_load_save_file && !save_level_pending_ && !should_load_destination_planet &&
+            data_ready && !data_client->busy() && game_state == PlayerControl) {
             autosave_pending = false;
             perform_save_operation(3);
         }
@@ -212,6 +223,10 @@ void Game::on_tick() {
 }
 
 void Game::before_player_spawn() {
+    if (!should_load_destination_planet) {
+        save_level_pending_ = false;
+    }
+
     if (client_ && client_->connected()) {
         Player::shared().on_respawned();
         Logger::debug("Player spawn");
@@ -590,6 +605,9 @@ void Game::load() {
 
     destination_planet = *(int*)((u32)data + 0x18);
     should_load_destination_planet = true;
+
+    save_level_pending_ = true;
+    save_loaded_time_ = get_time();
 
     DataClient::unlock_save_file();
 

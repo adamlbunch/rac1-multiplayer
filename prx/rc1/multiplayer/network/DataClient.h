@@ -6,6 +6,7 @@
 #define RAC1_MULTIPLAYER_DATACLIENT_H
 
 #include <sys/timer.h>
+#include <sys/time.h>
 #include <sys/ppu_thread.h>
 
 #include <sys/types.h>
@@ -38,6 +39,10 @@ public:
 
         client.running_ = false;
         data_client_ = nullptr;
+
+        if (client.sockfd_ >= 0) {
+            socketclose(client.sockfd_);
+        }
 
         sys_ppu_thread_exit(0);
     }

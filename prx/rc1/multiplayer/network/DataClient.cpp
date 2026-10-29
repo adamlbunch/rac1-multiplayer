@@ -68,6 +68,17 @@ DataClient::DataClient(sockaddr_in* sockaddr, u32 key) : sockfd_(), key_(), shou
 
 void DataClient::_connect() {
     sockfd_ = socket(AF_INET, SOCK_STREAM, 0);
+
+    // Sending and receiving a file block until it's through. A server that's gone without closing the stream (its PC
+    //  asleep, the network down) would block them for good, and the game with them: it waits for this thread when
+    //  it's done with the server (GameClient::close_data_client). As long as GameClient waits before it decides the
+    //  server is gone, so a stall it lives through doesn't end the stream.
+    struct timeval timeout;
+    timeout.tv_sec = 10;
+    timeout.tv_usec = 0;
+    setsockopt(sockfd_, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(sockfd_, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
     if (connect(sockfd_, (sockaddr*)sockaddr_, sizeof(sockaddr_in)) != -1) {
         running_ = true;
         send(sockfd_, &key_, 4, 0);
@@ -142,7 +153,9 @@ void DataClient::run() {
                             Logger::error("Error downloading file type %d; Downloaded %d bytes", file_upload.file_type, downloaded);
                             return;
                         } else if (d == 0) {
+                            // The server closed the stream: nothing more is coming
                             Logger::warning("Recvd 0 bytes for file type %d; Downloaded %d bytes", file_upload.file_type, downloaded);
+                            return;
                         }
 
                         downloaded += (size_t)d;

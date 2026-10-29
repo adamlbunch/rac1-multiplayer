@@ -94,6 +94,10 @@ private:
     u8 level_flags1_[0x10];
     u8 level_flags2_[0x100];
 
+    // We loaded a save, and the level it takes us to isn't up yet (see on_tick)
+    bool save_level_pending_;
+    int64_t save_loaded_time_;
+
     static ServerQueryCallback server_query_callback_;
 
     void check_level_flags();
