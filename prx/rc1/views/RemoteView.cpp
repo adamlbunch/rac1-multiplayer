@@ -12,7 +12,8 @@ void RemoteView::on_load() {
 
     memory_info_text_ = new TextElement(80, 0, "<memory>", ViewMenu);
     ping_text_ = new TextElement(0, 20, "<ping>", ViewMenu);
-    status_text_ = new TextElement(250, 30, "", 0xff);
+    // Below where the game shows the player's health
+    status_text_ = new TextElement(250, 55, "", 0xff);
 //    profiler_text_ = new TextAreaElement(-70, 40, 250, 300);
 //    profiler_text_->draws_background = true;
 
