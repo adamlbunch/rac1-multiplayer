@@ -595,6 +595,13 @@ void GameClient::update_set_state(MPPacketSetState* packet) {
                 *(int*)0xa10700 = 1;
                 *(int*)0xa10704 = (int)packet->value;
                 *(int*)0x969c70 = (int)packet->value;
+            } else if (Player::shared().spawn_id == 0 && current_planet == (int)packet->value &&
+                       !should_load_destination_planet) {
+                // We're there already: we rejoined a game from the level we played on when we lost the server. The
+                //  server learns which level a player is on from their respawn, and without a load there's none, so
+                //  we'd never see the other players. Tell it as a respawn would.
+                Logger::info("Already on planet %d", (int)packet->value);
+                Player::shared().on_respawned();
             }
 
             break;
