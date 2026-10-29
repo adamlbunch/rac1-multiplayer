@@ -64,7 +64,7 @@ typedef void (*MobyUpdateFunction)(Moby*);
 // UIDs of the mobys placed in a level we keep track of, see host_lacks_
 #define MAX_PLACED_UIDS 4096
 
-// After a copy couldn't be made (the moby table or our variables for copies are full), how long until we try again
+// After a copy couldn't be spawned (the game's moby table is full), how long until we try again
 #define COPY_RETRY_TICKS 60
 
 // How much nearer another player has to be for an enemy to go after them instead of the one it's after
@@ -1392,24 +1392,34 @@ void EnemySync::on_tick(Client* client) {
 static u8 revived_vars_[MAX_REVIVED_VARS][REVIVED_VARS_SIZE] __attribute__((aligned(16)));
 static Moby* revived_vars_owner_[MAX_REVIVED_VARS];
 
-static u8* take_revived_vars(Moby* moby) {
+static int free_revived_vars() {
     for (int i = 0; i < MAX_REVIVED_VARS; i++) {
         Moby* owner = revived_vars_owner_[i];
         if (owner == nullptr || owner->state < 0 || owner->vars != revived_vars_[i]) {
-            revived_vars_owner_[i] = moby;
-            memset(revived_vars_[i], 0, REVIVED_VARS_SIZE);
-            return revived_vars_[i];
+            return i;
         }
     }
 
-    return nullptr;
+    return -1;
+}
+
+static u8* take_revived_vars(Moby* moby) {
+    int i = free_revived_vars();
+    if (i < 0) {
+        return nullptr;
+    }
+
+    revived_vars_owner_[i] = moby;
+    memset(revived_vars_[i], 0, REVIVED_VARS_SIZE);
+    return revived_vars_[i];
 }
 
 // A copy of a moby another game's enemy spawned, which our copy of that enemy didn't spawn (it doesn't run here). Or
 //  of an enemy placed in the level that we destroyed here, which is back in that game because a respawn there set the
 //  level up again: we show it from there too, so we both see the same enemies.
 static Moby* make_copy(MPEnemyState* state, bool revived) {
-    if ((state->spawn == 0) != revived || GadgetModels::loaded_class(state->o_class) == nullptr) {
+    if ((state->spawn == 0) != revived || GadgetModels::loaded_class(state->o_class) == nullptr ||
+        (revived && free_revived_vars() < 0)) {
         return nullptr;
     }
 
@@ -1441,7 +1451,6 @@ static Moby* make_copy(MPEnemyState* state, bool revived) {
         if (vars == nullptr) {
             moby->state = -1;
             delete_moby(moby);
-            copy_retry_tick_ = ticks_ + COPY_RETRY_TICKS;
             return nullptr;
         }
 
