@@ -10,11 +10,12 @@
 //  which can't be copied to another game: they hold addresses and table positions that are different there. So an
 //  enemy stays in the game that runs it. It only moves to another when the host leaves the level, or when the host's
 //  game doesn't have it (it's already gone there, or something only another player set off brought it out): then the
-//  game that has it runs it for everyone, until the host's states of it come.
+//  game that has it runs it for everyone, until the host's states of it come. That game remembers which ones the host
+//  doesn't have: a respawn there brings them back again, and it goes on running them for everyone right away.
 //
-// The game's enemies go after the player in its globals. The host's game runs the enemies near other players too, and
-//  while each one's update runs, those globals are the nearest player's, so it goes after them like it would in
-//  their own game. What it hits on them there, they take in their game (see WorldSync).
+// The game's enemies go after the player in its globals. The game that runs an enemy for everyone runs it near other
+//  players too, and while its update runs, those globals are the nearest player's, so it goes after them like it
+//  would in their own game. What it hits on them there, they take in their game (see WorldSync).
 //
 // Hits still reach every game (see WorldSync), so health and deaths are the same everywhere. A game that doesn't run
 //  an enemy lets it react to hits on its own, so it flinches, dies and drops its bolts there too. Whatever damage it
