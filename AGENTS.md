@@ -8,8 +8,12 @@ Setting the game up for a user? Follow [README.md](README.md) instead. This file
   ([build.yml](.github/workflows/build.yml)) and keeps the `.pkg`, `USRDIR` and `mod.map` as the run's artifact.
 - Pushing a version tag (`git tag v1.2.3 && git push origin v1.2.3`) also publishes that build as a GitHub release.
   It becomes the download that the README and `setup/install-coop.ps1` use
-  (`releases/latest/download/Ratchet-Coop-Mod-sync.pkg`), so players get it the next time they update. Releases are
-  public: only with the repository owner's OK.
+  (`releases/latest/download/Ratchet-Coop-Mod-sync.pkg`), and `setup/coop-launcher.ps1` installs it from its
+  `Ratchet-Coop-Mod-files.zip` over any older release the next time a player starts the game, so every player gets
+  it. Releases are public: only with the repository owner's OK.
+- The launcher installs whichever release is marked latest, so a broken release is rolled back by marking the one
+  before it latest (`gh release edit <tag> --latest`). It finds the installed release by `mod.sprx`'s SHA256, which
+  GitHub lists for each release's files, and leaves a `mod.sprx` that matches none alone (a local or CI build).
 - `upstream-main` is [bordplate/rac1-multiplayer](https://github.com/bordplate/rac1-multiplayer) as it was when this
   was forked. The other branches (`coop`, `cleanup`, `wip` and so on) are the original's.
 - The server is [adamlbunch/Lawrence](https://github.com/adamlbunch/Lawrence), branch `main`. The packets the two

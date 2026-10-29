@@ -2,7 +2,9 @@ name: Build
 
 # Builds the mod on every push to main and keeps the .pkg as a workflow artifact. Pushing a version tag (v1.2.3)
 #  also publishes a release with it as Ratchet-Coop-Mod-sync.pkg, which becomes the latest download, and the build's
-#  mod.sprx and mod.map, to tell which release a player's crash log is from and read its addresses.
+#  mod.sprx and mod.map, to tell which release a player's crash log is from and read its addresses. Its
+#  Ratchet-Coop-Mod-files.zip holds what the package installs, which setup/coop-launcher.ps1 puts over an older
+#  release the next time a player starts the game.
 on:
   push:
     branches: [ main ]
@@ -52,6 +54,10 @@ jobs:
         run: make all
         shell: bash
 
+      - name: Zip the package's files
+        run: Compress-Archive -Path build/PS3_GAME/* -DestinationPath Ratchet-Coop-Mod-files.zip
+        shell: pwsh
+
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
@@ -60,12 +66,13 @@ jobs:
             build/BDUPS3-BORD00001_00-0000000000000000.pkg
             build/PS3_GAME/USRDIR
             prx/build/bin/mod.map
+            Ratchet-Coop-Mod-files.zip
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           Copy-Item build/BDUPS3-BORD00001_00-0000000000000000.pkg Ratchet-Coop-Mod-sync.pkg
-          gh release create $env:GITHUB_REF_NAME Ratchet-Coop-Mod-sync.pkg build/PS3_GAME/USRDIR/mod.sprx prx/build/bin/mod.map --title "Ratchet & Clank Co-op $env:GITHUB_REF_NAME" --generate-notes --latest
+          gh release create $env:GITHUB_REF_NAME Ratchet-Coop-Mod-sync.pkg Ratchet-Coop-Mod-files.zip build/PS3_GAME/USRDIR/mod.sprx prx/build/bin/mod.map --title "Ratchet & Clank Co-op $env:GITHUB_REF_NAME" --generate-notes --latest
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh

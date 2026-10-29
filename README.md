@@ -47,7 +47,7 @@ updates the mod and keeps their settings, then check the table.
 | Networking on | `$RPCS3\config\config.yml`, section `Net:` | `Internet enabled: Connected` |
 | Private network between the two PCs | Tailscale | `tailscale ping <other PC's 100.x IP>` answers |
 | Co-op server (host only) | e.g. `$HOME\Emulators\Lawrence` | log says `Started Lawrence on 0.0.0.0:2407` |
-| Launcher that keeps crash logs | `$RPCS3\coop-launcher.ps1`, run by the "Ratchet Co-op" Desktop shortcut | file exists |
+| Launcher that updates the mod and keeps crash logs | `$RPCS3\coop-launcher.ps1`, run by the "Ratchet Co-op" Desktop shortcut | file exists |
 
 ## Fast path: the setup scripts
 
@@ -69,8 +69,8 @@ powershell -ExecutionPolicy Bypass -File "$env:TEMP\setup-server.ps1" -RPCS3 "C:
   user clicks Install, then closes RPCS3 when it's done (on a first start RPCS3 shows a welcome window first, which
   they close). Pass `-Username` and `-Server` (the host uses `127.0.0.1`) so it doesn't stop to ask.
 - It also puts `coop-launcher.ps1` in the RPCS3 folder and a "Ratchet Co-op" shortcut on the Desktop that runs it
-  (`-NoShortcut` skips the shortcut). The launcher boots the mod and keeps RPCS3's log of each session, see
-  [Crashes](#crashes). On the host, `setup-server.ps1` makes "Ratchet Co-op" start the server first, then the launcher.
+  (`-NoShortcut` skips the shortcut). The launcher updates the mod to the latest release (see [Updating](#updating)),
+  boots it and keeps RPCS3's log of each session, see [Crashes](#crashes). On the host, `setup-server.ps1` makes "Ratchet Co-op" start the server first, then the launcher.
 - `setup-server.ps1` needs Git and a .NET SDK 8 or newer. It asks before installing them, or `-InstallTools` installs
   them without asking (only with the user's OK). `-AddFirewallRule` lets the server through Windows Firewall, which
   needs an administrator PowerShell. Run it again to update the server; settings and the saved campaign are kept.
@@ -266,7 +266,12 @@ The game adds a `userid` line itself. If a `settings.conf` is already there, cha
 
 ## Updating
 
-- Mod: run `install-coop.ps1` again, or repeat step 4, on both PCs. Both players must run the same release.
+- Mod: the "Ratchet Co-op" shortcut (`coop-launcher.ps1`) does it. Before RPCS3 starts, it replaces an installed
+  release with the latest one and says so in a message, so each player updates the next time they start the game.
+  Both players must run the same release. It leaves a `mod.sprx` that isn't from any release alone, and without
+  internet the game starts with what's installed (the reason goes to `coop-logs\launcher-errors.txt`). Releases from
+  before `Ratchet-Coop-Mod-files.zip` was attached to them, and launchers from before the update check, need
+  `install-coop.ps1` run again, or step 4 repeated, on both PCs.
 - Server: run `setup-server.ps1` again with the server stopped. By hand: `git pull` in the clone, then the
   `dotnet publish` command from step 8. A clone still on the old `coop-fixes` branch (it's gone)
   needs `git fetch --prune` and `git switch main` first. `settings.toml`, `saves` and the launchers stay.
@@ -280,7 +285,7 @@ The game adds a `userid` line itself. If a `settings.conf` is already there, cha
 | The mod starts but the game won't | None of the three game IDs is installed (step 3) |
 | Can't connect to the server | `Internet enabled: Connected` missing (step 5); server not running; firewall (step 8.5); wrong IP or port; `tailscale ping` fails |
 | Server window waits for "Server Name" | `settings.toml` has no `name` (step 8.3) |
-| The server says the mod is out of date | That player has the official mod or an older release: repeat step 4 |
+| The server says the mod is out of date | That player has the official mod or an older release: start the game with "Ratchet Co-op", or repeat step 4 |
 
 ### Crashes
 

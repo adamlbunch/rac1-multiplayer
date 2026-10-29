@@ -1,10 +1,15 @@
 <#
 .SYNOPSIS
-Boots the Ratchet & Clank co-op mod in RPCS3 and keeps RPCS3's log of every session, so crashes can be debugged.
+Updates the Ratchet & Clank co-op mod, boots it in RPCS3 and keeps RPCS3's log of every session, so crashes can be
+debugged.
 
 .DESCRIPTION
-install-coop.ps1 puts this next to rpcs3.exe, with a "Ratchet Co-op" shortcut on the Desktop that runs it. RPCS3
-rewrites log\RPCS3.log every time it starts, so when RPCS3 closes this zips the session's logs into
+install-coop.ps1 puts this next to rpcs3.exe, with a "Ratchet Co-op" shortcut on the Desktop that runs it. Before
+RPCS3 starts, an installed release of the mod is replaced with the release marked latest on GitHub, from that
+release's Ratchet-Coop-Mod-files.zip. A mod.sprx that isn't from any release (a build of your own) is left alone,
+and without internet the game starts with what's installed.
+
+RPCS3 rewrites log\RPCS3.log every time it starts, so when RPCS3 closes this zips the session's logs into
 coop-logs\<start time>.zip, "-crash" added to the name if the game hit a fatal error or RPCS3 didn't exit cleanly.
 The newest 30 are kept. A session RPCS3 was started for some other way is saved the next time this runs, unless RPCS3
 was opened again in between. Errors go to coop-logs\launcher-errors.txt, since this runs without a window.
@@ -18,6 +23,11 @@ it opens RPCS3.
 param([switch]$SaveOnly)
 
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+
+$Releases = 'https://api.github.com/repos/adamlbunch/rac1-multiplayer/releases'
+# What the mod's package installs into the game's folder, attached to every release from a version tag
+$FilesAsset = 'Ratchet-Coop-Mod-files.zip'
 
 $RPCS3 = $PSScriptRoot
 $Exe = "$RPCS3\rpcs3.exe"
@@ -102,6 +112,54 @@ function Save-Session($exitCode) {
     return $zipPath
 }
 
+# The SHA256 GitHub lists for one of a release's files, as "sha256:<hex>"
+function Get-AssetDigest($release, $name) { ($release.assets | Where-Object name -eq $name).digest }
+
+# Replaces an installed release with the one marked latest, so marking an older release latest rolls players back.
+#  Returns the old and new release's tags, or nothing if it changed nothing. The new files are written next to the
+#  old ones and only swapped in once they're all there, so a failed download leaves the installed release working.
+function Update-Mod {
+    $game = [IO.Path]::GetFullPath("$(Get-DevHdd0)\game\BORD00001")
+    $mod = "$game\USRDIR\mod.sprx"
+    if (-not (Test-Path $mod)) { return }
+    $installed = "sha256:$((Get-FileHash $mod).Hash)"
+    $latest = Invoke-RestMethod "$Releases/latest" -TimeoutSec 10
+    if ((Get-AssetDigest $latest 'mod.sprx') -eq $installed) { return }
+    # Windows PowerShell passes the list on as one object: ForEach-Object splits it into the releases
+    $from = Invoke-RestMethod "$($Releases)?per_page=100" -TimeoutSec 10 |
+        ForEach-Object { $_ } | Where-Object { (Get-AssetDigest $_ 'mod.sprx') -eq $installed } | Select-Object -First 1
+    $files = $latest.assets | Where-Object name -eq $FilesAsset
+    if (-not $from -or -not $files) { return }
+
+    $download = "$env:TEMP\$FilesAsset"
+    Invoke-WebRequest $files.browser_download_url -OutFile $download -TimeoutSec 120
+    try {
+        if ("sha256:$((Get-FileHash $download).Hash)" -ne $files.digest) { throw "$FilesAsset didn't download whole" }
+        Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+        $zip = [IO.Compression.ZipFile]::OpenRead($download)
+        try {
+            $paths = foreach ($entry in $zip.Entries | Where-Object Name) {
+                $path = [IO.Path]::GetFullPath((Join-Path $game $entry.FullName))
+                if (-not $path.StartsWith("$game\", 'OrdinalIgnoreCase')) { throw "$FilesAsset has $($entry.FullName)" }
+                New-Item -ItemType Directory -Force (Split-Path $path) | Out-Null
+                [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, "$path.new", $true)
+                $path
+            }
+        } finally {
+            $zip.Dispose()
+        }
+    } finally {
+        Remove-Item $download
+    }
+    foreach ($path in $paths) { Move-Item -Force "$path.new" $path }
+    return $from.tag_name, $latest.tag_name
+}
+
+function Write-LauncherError($err) {
+    New-Item -ItemType Directory -Force $Logs | Out-Null
+    [IO.File]::AppendAllText("$Logs\launcher-errors.txt", "$(Format-Time (Get-Date)) $err`r`n$($err.ScriptStackTrace)`r`n`r`n")
+}
+
 function Show-Message($text) {
     Add-Type -AssemblyName System.Windows.Forms
     [void][Windows.Forms.MessageBox]::Show($text, 'Ratchet Co-op')
@@ -120,6 +178,17 @@ try {
     }
     [void](Save-Session $null)
 
+    # Without internet, or with GitHub down, the game starts with the release it has
+    try {
+        $from, $to = Update-Mod
+        if ($to) {
+            Show-Message ("The co-op mod was updated to $to (you had $from). Everyone needs the same version to play " +
+                'together: the other players get it the next time they start Ratchet Co-op.')
+        }
+    } catch {
+        Write-LauncherError $_
+    }
+
     $start = @{ FilePath = $Exe; WorkingDirectory = $RPCS3; PassThru = $true }
     $eboot = "$(Get-DevHdd0)\game\BORD00001\USRDIR\EBOOT.BIN"
     if (Test-Path $eboot) { $start.ArgumentList = "`"$eboot`"" }
@@ -132,7 +201,6 @@ try {
     while ($running = Get-RPCS3Process) { $running | Wait-Process }
     [void](Save-Session $exitCode)
 } catch {
-    New-Item -ItemType Directory -Force $Logs | Out-Null
-    [IO.File]::AppendAllText("$Logs\launcher-errors.txt", "$(Format-Time (Get-Date)) $_`r`n$($_.ScriptStackTrace)`r`n`r`n")
+    Write-LauncherError $_
     Show-Message "Ratchet Co-op: $_`n`nDetails are in $Logs\launcher-errors.txt"
 }

@@ -5,11 +5,11 @@ Installs or updates the Ratchet & Clank co-op mod in RPCS3 and gets RPCS3 ready 
 .DESCRIPTION
 Finds RPCS3 (or downloads it with -InstallRPCS3), checks the PS3 system software and the game are installed, installs
 the latest release of the mod, turns RPCS3's networking on, and optionally saves the username and server address so
-the game connects by itself. Run it again to update the mod.
+the game connects by itself.
 
 It also puts coop-launcher.ps1 next to rpcs3.exe, with a "Ratchet Co-op" shortcut on the Desktop that runs it. The
-launcher boots the mod and keeps RPCS3's log of every session in the coop-logs folder there, so crashes can be
-debugged.
+launcher updates the mod to the latest release, boots it and keeps RPCS3's log of every session in the coop-logs
+folder there, so crashes can be debugged. Run this again to update a mod or launcher from before that.
 
 Without parameters it asks for what it needs:
   powershell -ExecutionPolicy Bypass -File install-coop.ps1
