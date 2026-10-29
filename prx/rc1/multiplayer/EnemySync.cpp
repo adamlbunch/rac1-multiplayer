@@ -48,6 +48,10 @@ typedef void (*MobyUpdateFunction)(Moby*);
 // Frames without a state from the game running an enemy before it counts as not running it any more
 #define OWNER_TIMEOUT 30
 
+// Frames our copy of an enemy placed in the level waits for that game's states before it goes. After a respawn there,
+//  it only sends again once it shows our player again, which can take a moment. When the enemy dies there, it tells us.
+#define PLACED_COPY_TIMEOUT 120
+
 // Frames without a packet from the host before it counts as gone (it left the level, or the game)
 #define HOST_TIMEOUT 60
 
@@ -1374,6 +1378,10 @@ void EnemySync::on_tick(Client* client) {
         // Whoever ran it stopped sending it, so it's back to running on its own until someone takes it. A copy we made
         //  goes with it.
         if (enemy->owner != OWNER_SELF && !owner_is_remote(enemy) && !enemy->reacting) {
+            if (enemy->copy && !enemy->spawned && ticks_ - enemy->last_record_tick <= PLACED_COPY_TIMEOUT) {
+                continue;
+            }
+
             if (enemy->copy) {
                 moby->state = -1;
                 delete_moby(moby);
