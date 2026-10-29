@@ -31,17 +31,36 @@ static int table_index(Moby* moby) {
     return moby != nullptr && index >= 0 && index < MAX_TABLE ? index : -1;
 }
 
+// A new moby in this slot of the table: the one we knew there before is gone. Its entry can be one that went to
+//  another moby since, which keeps it.
+static void forget_entry(int index, Moby* moby) {
+    if (entries_[index] != 0) {
+        SpawnedMoby* spawned = &spawned_[entries_[index] - 1];
+        if (spawned->moby == moby) {
+            spawned->moby = nullptr;
+        }
+        entries_[index] = 0;
+    }
+}
+
+// The entry goes to another moby: the one it was for (which died) isn't known by it any more
+static void reuse_entry(int slot) {
+    SpawnedMoby* spawned = &spawned_[slot];
+    if (spawned->moby != nullptr) {
+        int old = table_index(spawned->moby);
+        if (old >= 0 && entries_[old] == slot + 1) {
+            entries_[old] = 0;
+        }
+    }
+}
+
 void SpawnedMobys::on_spawned(Moby* moby, Moby* spawner) {
     int index = table_index(moby);
     if (index < 0) {
         return;
     }
 
-    // Its slot may have held a moby we knew before
-    if (entries_[index] != 0) {
-        spawned_[entries_[index] - 1].moby = nullptr;
-        entries_[index] = 0;
-    }
+    forget_entry(index, moby);
 
     int spawner_index = LevelMobys::index_of(spawner);
     if (spawner_index < 0 || spawner_index >= MAX_TABLE) {
@@ -62,14 +81,9 @@ void SpawnedMobys::on_spawned(Moby* moby, Moby* spawner) {
         return;
     }
 
-    SpawnedMoby* spawned = &spawned_[slot];
-    if (spawned->moby != nullptr) {
-        int old = table_index(spawned->moby);
-        if (old >= 0 && entries_[old] == slot + 1) {
-            entries_[old] = 0;
-        }
-    }
+    reuse_entry(slot);
 
+    SpawnedMoby* spawned = &spawned_[slot];
     spawned->moby = moby;
     spawned->o_class = moby->o_class;
     spawned->spawner_uid = spawner->uid;
@@ -99,14 +113,12 @@ void SpawnedMobys::adopt(Moby* moby, u16 spawner_uid, u16 spawn) {
         return;
     }
 
-    if (entries_[index] != 0) {
-        spawned_[entries_[index] - 1].moby = nullptr;
-        entries_[index] = 0;
-    }
+    forget_entry(index, moby);
 
     for (int i = 0; i < MAX_SPAWNED; i++) {
         SpawnedMoby* spawned = &spawned_[i];
         if (spawned->moby == nullptr || spawned->moby->state < 0 || spawned->moby->o_class != (short)spawned->o_class) {
+            reuse_entry(i);
             spawned->moby = moby;
             spawned->o_class = moby->o_class;
             spawned->spawner_uid = spawner_uid;

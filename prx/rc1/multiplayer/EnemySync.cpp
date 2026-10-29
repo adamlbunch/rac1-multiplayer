@@ -61,6 +61,12 @@ typedef void (*MobyUpdateFunction)(Moby*);
 //  host only sends one once it has seen it move on its own for a while (MOVING_FRAMES), like we do.
 #define HOST_WAIT 120
 
+// UIDs of the mobys placed in a level we keep track of, see host_lacks_
+#define MAX_PLACED_UIDS 4096
+
+// After a copy couldn't be made (the moby table or our variables for copies are full), how long until we try again
+#define COPY_RETRY_TICKS 60
+
 // How much nearer another player has to be for an enemy to go after them instead of the one it's after
 #define TARGET_MARGIN 3.0f
 
@@ -168,6 +174,16 @@ static u32 loop_tick_ = 0;                  // When our moby update loop last ra
 // The game that hosts the level's enemies: OWNER_SELF, another player's ID, or OWNER_NONE while we listen for one
 static u16 host_ = OWNER_NONE;
 static u32 listen_ticks_ = 0;
+
+// Bit per UID of the enemies placed in the level we ran for everyone because the host's game doesn't have them (it
+//  destroyed them, and our respawn brought them back here). Each respawn of ours on the level brings them back again,
+//  and we go on running them right away: waiting for the host's states first, the other games would see them go away
+//  for a while and come back. Until the host sends us one, which it has again then. About one host, on one level.
+static u8 host_lacks_[MAX_PLACED_UIDS / 8];
+static u16 host_lacks_host_ = OWNER_NONE;
+static int host_lacks_planet_ = -1;
+
+static u32 copy_retry_tick_ = 0;
 
 // The moby being updated, and what we noted about it before its update
 static Moby* updating_ = nullptr;
@@ -320,11 +336,33 @@ static bool playing() {
     return ratchet_moby != nullptr && game_state == PlayerControl;
 }
 
+static bool host_lacks(Moby* moby) {
+    return LevelMobys::index_of(moby) >= 0 && moby->uid < MAX_PLACED_UIDS &&
+           (host_lacks_[moby->uid / 8] & (1 << (moby->uid % 8))) != 0;
+}
+
+static void set_host_lacks(u16 uid, bool lacks) {
+    if (uid >= MAX_PLACED_UIDS) {
+        return;
+    }
+
+    if (lacks) {
+        host_lacks_[uid / 8] |= 1 << (uid % 8);
+    } else {
+        host_lacks_[uid / 8] &= ~(1 << (uid % 8));
+    }
+}
+
 // We stop hosting: the enemies we ran for everyone are the host's now, and wait here for its states. What they spawned
 //  stays with us until it's gone, the host's game doesn't have it.
 static void leave_enemies_to(u16 host) {
     host_ = host;
     memset(waits_, 0, sizeof(waits_));
+
+    if (host != host_lacks_host_) {
+        memset(host_lacks_, 0, sizeof(host_lacks_));
+        host_lacks_host_ = host;
+    }
 
     for (int i = 0; i < MAX_ENEMIES; i++) {
         SyncedEnemy* enemy = &enemies_[i];
@@ -375,6 +413,8 @@ static void choose_host() {
     if (listen_ticks_ >= LISTEN_MAX_TICKS || (listen_ticks_ >= LISTEN_TICKS && !others_here())) {
         Logger::info("EnemySync %u: hosting the enemies", ticks_);
         host_ = OWNER_SELF;
+        memset(host_lacks_, 0, sizeof(host_lacks_));
+        host_lacks_host_ = OWNER_SELF;
     }
 }
 
@@ -834,12 +874,14 @@ static bool before_update(Moby* moby) {
     // Another game hosts the enemies: one we know is an enemy waits for its states. If they don't come, the host's
     //  game doesn't have it, and ours runs it for everyone. Not while we don't know the host yet, or its player is
     //  away: then it just waits. So does one the host sent before: the host has it, it's just not running it right
-    //  now (it's out of everyone's reach there, or the host's game stalled for a moment).
+    //  now (it's out of everyone's reach there, or the host's game stalled for a moment). One we know the host doesn't
+    //  have, since we ran it for everyone before our respawn, goes on right away (see host_lacks_).
+    bool lacking = !hosting() && host_lacks(moby);
     if (enemy == nullptr && !hosting() && host_elsewhere() && !(sync_off_ & SYNC_OFF_REMOTE_ENEMIES) &&
-        (traits_[updating_index_] & TRAITS_ENEMY) == TRAITS_ENEMY && game_state == PlayerControl) {
+        ((traits_[updating_index_] & TRAITS_ENEMY) == TRAITS_ENEMY || lacking) && game_state == PlayerControl) {
         bool sent_before = (from_host_[updating_index_ / 8] & (1 << (updating_index_ % 8))) != 0;
         bool waiting = host_ == OWNER_NONE || host_away() || sent_before;
-        if (waits_[updating_index_] < HOST_WAIT || waiting) {
+        if (!lacking && (waits_[updating_index_] < HOST_WAIT || waiting)) {
             if (!waiting) {
                 waits_[updating_index_] += 1;
             }
@@ -848,10 +890,15 @@ static bool before_update(Moby* moby) {
 
         enemy = add_enemy(updating_index_, moby);
         if (enemy != nullptr) {
-            Logger::debug("EnemySync %u: the host doesn't run moby %d/%d (o_class %d), running it for everyone",
-                          ticks_, enemy->uid, enemy->spawn, moby->o_class);
+            Logger::debug("EnemySync %u: the host doesn't run moby %d/%d (o_class %d), running it for everyone%s",
+                          ticks_, enemy->uid, enemy->spawn, moby->o_class, lacking ? " again" : "");
             enemy->owner = OWNER_SELF;
             enemy->animation.valid = false;
+            traits_[updating_index_] |= TRAITS_ENEMY;
+
+            if (enemy->spawn == 0) {
+                set_host_lacks(enemy->uid, true);
+            }
         }
     }
 
@@ -1026,8 +1073,9 @@ static void after_transform(Moby* moby) {
         return;
     }
 
-    // Another game runs it: the host, or another player's game the host left it to
-    if (enemy != nullptr && owner_is_remote(enemy)) {
+    // Another game runs it: the host, or another player's game the host left it to. Our copy of one never runs here,
+    //  it goes once that game stops sending it.
+    if (enemy != nullptr && (owner_is_remote(enemy) || enemy->copy)) {
         return;
     }
 
@@ -1079,6 +1127,15 @@ static Moby* add_to_list(Moby* list, Moby** last, u8* listed, int index) {
     return list;
 }
 
+static bool runs_near_others(Moby* moby, int index) {
+    if (hosting()) {
+        return can_attack(moby);
+    }
+
+    SyncedEnemy* enemy = find_enemy(index);
+    return enemy != nullptr ? enemy->owner == OWNER_SELF : host_lacks(moby);
+}
+
 static Moby* add_remote_enemies(Moby* list) {
     static u8 listed[MAX_LEVEL_MOBYS / 8];
     memset(listed, 0, sizeof(listed));
@@ -1108,9 +1165,10 @@ static Moby* add_remote_enemies(Moby* list) {
     }
 
     // While we host, what could be an enemy runs here near the other players too, the way the game runs it near our
-    //  camera: within its update distance. Their games wait for our states of it. They go by their camera, which can
-    //  be a way off from the player we know the position of, so a bit further.
-    if (hosting()) {
+    //  camera: within its update distance. Their games wait for our states of it. While another game hosts, so does
+    //  what we run for everyone (the host's game doesn't have it). They go by their camera, which can be a way off
+    //  from the player we know the position of, so a bit further.
+    {
         u16 players[MIRROR_MAX_PLAYERS];
         Vec4 positions[MIRROR_MAX_PLAYERS];
         int n = Mirror::shown_players(players, MIRROR_MAX_PLAYERS);
@@ -1123,7 +1181,7 @@ static Moby* add_remote_enemies(Moby* list) {
 
         for (int index = 0; n > 0 && index < MAX_LEVEL_MOBYS && LEVEL_MOBYS_START + index < moby_ptr_end; index++) {
             Moby* moby = LEVEL_MOBYS_START + index;
-            if (moby->state < 0 || (listed[index / 8] & (1 << (index % 8))) || !can_attack(moby)) {
+            if (moby->state < 0 || (listed[index / 8] & (1 << (index % 8))) || !runs_near_others(moby, index)) {
                 continue;
             }
 
@@ -1303,6 +1361,12 @@ void EnemySync::on_tick(Client* client) {
                 client->send_ack(Packet::make_moby_killed_packet(enemy->uid, enemy->o_class, enemy->spawn));
             }
 
+            // Our copy, still there but not known by what we know it by any more: it would stay behind for good
+            if (enemy->copy && moby < moby_ptr_end && moby->state >= 0 && moby->o_class == (short)enemy->o_class) {
+                moby->state = -1;
+                delete_moby(moby);
+            }
+
             remove_enemy(enemy);
             continue;
         }
@@ -1351,6 +1415,7 @@ static Moby* make_copy(MPEnemyState* state, bool revived) {
 
     Moby* moby = spawn_moby(state->o_class);
     if (moby == nullptr) {
+        copy_retry_tick_ = ticks_ + COPY_RETRY_TICKS;
         return nullptr;
     }
 
@@ -1376,6 +1441,7 @@ static Moby* make_copy(MPEnemyState* state, bool revived) {
         if (vars == nullptr) {
             moby->state = -1;
             delete_moby(moby);
+            copy_retry_tick_ = ticks_ + COPY_RETRY_TICKS;
             return nullptr;
         }
 
@@ -1402,22 +1468,37 @@ static void receive_state(EnemySender* sender_info, u32 frame, MPEnemyState* sta
     //  host's again. Another game's count only for enemies the host doesn't run, so neither ones we run nor ones
     //  another game (the host) sends us.
     bool from_host = sender_info->host && !hosting() && (host_ == sender || host_ == OWNER_NONE);
+
+    // The host has it (again), see host_lacks_
+    if (from_host && state->spawn == 0) {
+        set_host_lacks(state->uid, false);
+    }
+
     if (!from_host && enemy != nullptr &&
         (enemy->owner == OWNER_SELF || (owner_is_remote(enemy) && enemy->owner != sender))) {
         return;
     }
 
     bool copy = false;
-    if (moby == nullptr) {
+    if (moby == nullptr && (s32)(ticks_ - copy_retry_tick_) >= 0) {
         if (state->flags & MP_ENEMY_FLAG_SPAWNED) {
             moby = make_copy(state, false);
         } else if (state->spawn == 0 && LevelMobys::find_destroyed(state->uid, state->o_class) != nullptr) {
-            Logger::debug("EnemySync %u: moby %d (o_class %d) is back in player %d's game, showing it here too", ticks_,
-                          state->uid, state->o_class, sender);
             moby = make_copy(state, true);
+            if (moby != nullptr) {
+                Logger::debug("EnemySync %u: moby %d (o_class %d) is back in player %d's game, showing it here too",
+                              ticks_, state->uid, state->o_class, sender);
+            }
         }
         copy = moby != nullptr;
         index = sync_index(moby);
+
+        // One we can't keep track of would stay behind for good
+        if (copy && index < 0) {
+            moby->state = -1;
+            delete_moby(moby);
+            return;
+        }
     }
 
     if (moby == nullptr || index < 0) {
@@ -1433,6 +1514,7 @@ static void receive_state(EnemySender* sender_info, u32 frame, MPEnemyState* sta
         enemy = add_enemy(index, moby);
         if (enemy == nullptr) {
             if (copy) {
+                moby->state = -1;
                 delete_moby(moby);
             }
             return;
@@ -1664,6 +1746,12 @@ void EnemySync::reset() {
         listen_ticks_ = 0;
     }
     host_planet = current_planet;
+
+    // What the host's game doesn't have is kept over a respawn on the level, that's what it's for
+    if (current_planet != host_lacks_planet_) {
+        memset(host_lacks_, 0, sizeof(host_lacks_));
+        host_lacks_planet_ = current_planet;
+    }
 
     // Our copies are only known while we track them: they'd stay behind as mobys nobody knows, so they go
     for (int i = 0; i < MAX_ENEMIES; i++) {
