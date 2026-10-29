@@ -59,6 +59,9 @@ public:
     virtual void disconnect();
     virtual void drop_receive();
 
+    // The server didn't finish the handshake in time. Tells the player and disconnects.
+    virtual void on_connect_timeout();
+
     int64_t latency_;
     uint64_t connection_start_time_;
     bool suppress_timeout_alert_;
@@ -69,10 +72,21 @@ public:
     bool connected() const { return connected_; }
     bool handshake_complete() const { return handshake_complete_; }
     long received() const { return received_; }
+
+    // We lost the server and are trying to get back to it: not connected, but not done with it either
+    virtual bool reconnecting() const { return false; }
+
+    // When we last received anything from the server
+    int64_t last_receive_time() const { return last_receive_time_; }
 protected:
     struct sockaddr_in sockaddr_;
 
     void do_ack_if_necessary(MPPacketHeader* packet);
+
+    // Closes the socket and forgets the connection: the handshake, and what we were waiting for the server to ack
+    void close_socket();
+
+    int64_t last_receive_time_;
 private:
     int sockfd_;
 

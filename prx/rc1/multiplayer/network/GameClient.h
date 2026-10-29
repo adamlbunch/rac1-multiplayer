@@ -57,6 +57,9 @@ struct GameClient : public Client {
     void update_level_configuration(MPPacketSetLevelConfiguration* packet);
     bool update(MPPacketHeader* header, void* packet_data);
     void on_tick();
+    void on_connect_timeout();
+
+    bool reconnecting() const { return reconnecting_; }
 
     // The moby we have for a server ID, if it's alive
     Moby* moby_for_uuid(u16 uuid);
@@ -85,6 +88,23 @@ private:
     void reset(); // override
     void close_data_client();
     bool waiting_for_connect_;
+
+    // Losing the server. The server doesn't always get to say it's gone (a crash, its PC going to sleep, the network
+    //  between us dropping), and a server that restarted doesn't know us anymore. Either way our session there is
+    //  over: we tell the player, end it here too, and keep trying the same server until it answers again. It then
+    //  shows its lobby list, where the player rejoins their game.
+    void check_server();
+    void lose_server(const char* reason);
+    void end_session();
+    void show_reconnect_status();
+
+    // Why we lost the server, noticed while receiving. It's handled after, so the socket isn't closed under receive().
+    const char* lost_reason_;
+    bool reconnecting_;
+    int reconnect_attempts_;
+    int shown_reconnect_attempts_;
+    int64_t next_reconnect_time_;
+    int64_t last_check_time_;
 };
 
 

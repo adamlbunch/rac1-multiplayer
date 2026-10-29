@@ -87,6 +87,9 @@ struct RemoteView : public View, public ListMenuDelegate, public InputDelegate {
     void on_item_activated(int index, ListMenuElement* list_menu_element);
     void on_item_selected(int index, ListMenuElement *list_menu_element);
     void on_input_callback(InputElement *input_element);
+
+    // A line of our own, for what the server can't tell the player itself: that we lost it
+    void set_status(const char* text);
 private:
     Vector<TextElement*> text_elements_;
 
@@ -94,6 +97,7 @@ private:
 
     TextElement* ping_text_;
     TextElement* memory_info_text_;
+    TextElement* status_text_;
 
     TextAreaElement* profiler_text_;
 

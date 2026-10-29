@@ -51,35 +51,46 @@ void Client::_connect() {
 
     connected_ = true;
     connection_start_time_ = get_time();
+    last_receive_time_ = connection_start_time_;
 }
 
 void Client::disconnect() {
     send(Packet::make_disconnect_packet());
 
     flush();
-    socketclose(sockfd_);
-
-    connected_ = false;
-    handshake_complete_ = false;
-    sockfd_ = 0;
+    close_socket();
 }
 
-void Client::reset() {
-    Logger::info("Resetting connection...");
+void Client::close_socket() {
+    if (sockfd_ > 0) {
+        socketclose(sockfd_);
+    }
 
-    handshake_complete_ = false;
     connected_ = false;
+    handshake_complete_ = false;
     sockfd_ = 0;
 
     ack_id_ = 0;
     ack_cycle_ = 0;
 
+    for (int i = 0; i < sizeof(unacked_) / sizeof(unacked_[0]); i++) {
+        if (unacked_[i].data != nullptr) {
+            delete unacked_[i].data;
+        }
+    }
+
     memset(&acked_, 0, sizeof(acked_));
     memset(&unacked_, 0, sizeof(unacked_));
 
+    // Also stops receive() going through the rest of what it got, if this was called while it handled a packet
     received_ = 0;
     send_buffer_len = 0;
+}
 
+void Client::reset() {
+    Logger::info("Resetting connection...");
+
+    close_socket();
     _connect();
 }
 
@@ -103,6 +114,14 @@ void Client::send_ack(Packet* packet) {
 static Profiler send_timer_("send");
 void Client::send(Packet* packet) {
     Profiler::Scope scope(&send_timer_);
+
+    // No socket to flush it to: buffering it would only fill the buffer up
+    if (sockfd_ <= 0) {
+        if (!packet->retain_after_send) {
+            delete packet;
+        }
+        return;
+    }
 
     packet->header->timeSent = get_time();
 
@@ -317,6 +336,8 @@ void Client::receive() {
             continue;
         }
 
+        last_receive_time_ = get_time();
+
         {
             Profiler::Scope s(&full_update_timer_);
 
@@ -399,6 +420,14 @@ int64_t Client::server_time_difference(int64_t time) {
     return get_estimated_server_time() - time;
 }
 
+void Client::on_connect_timeout() {
+    if (!suppress_timeout_alert_) {
+        String message = String("Timed out trying to connect to server.");
+        Game::shared().alert(message);
+    }
+    this->disconnect();
+}
+
 static Profiler unack_check_timer_("unack check");
 void Client::on_tick() {
     {
@@ -418,11 +447,7 @@ void Client::on_tick() {
 
     // Timeout
     if (connected_ && !handshake_complete_ && get_time() - connection_start_time_ > 5 * 1000) {
-        if (!suppress_timeout_alert_) {
-            String message = String("Timed out trying to connect to server.");
-            Game::shared().alert(message);
-        }
-        this->disconnect();
+        on_connect_timeout();
     }
 
     if (sockfd_ > 0) {
