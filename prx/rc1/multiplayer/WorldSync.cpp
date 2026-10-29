@@ -21,9 +21,9 @@
 #define MAX_PENDING_KILLS 32
 #define MAX_REMOTE_HITS 16
 
-// Bolts that fly out of destroyed crates and enemies
-#define BOLT_O_CLASS 13
-#define BIG_BOLT_O_CLASS 14
+// Bolts that fly out of destroyed crates and enemies: classes 13 to 16, worth 1, 5, 20 and 50
+#define FIRST_BOLT_O_CLASS 13
+#define LAST_BOLT_O_CLASS 16
 #define BOLT_RADIUS 5.0f
 
 // How long after another player's hit we keep its target's bolts from being picked up, and after it's gone
@@ -491,7 +491,7 @@ static void remove_remote_hit_bolts() {
     }
 
     for (Moby* moby = LEVEL_MOBYS_END; moby < moby_ptr_end; moby++) {
-        if (moby->state < 0 || (moby->o_class != BOLT_O_CLASS && moby->o_class != BIG_BOLT_O_CLASS)) {
+        if (moby->state < 0 || moby->o_class < FIRST_BOLT_O_CLASS || moby->o_class > LAST_BOLT_O_CLASS) {
             continue;
         }
 

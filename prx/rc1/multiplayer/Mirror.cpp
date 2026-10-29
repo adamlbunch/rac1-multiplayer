@@ -66,9 +66,9 @@ static u32 spawned_frames_[MP_MIRROR_MAX_SPAWNED];
 // A copy of something spawned that hasn't been in a frame we showed for this many ticks is gone
 #define SPAWNED_TIMEOUT 30
 
-// Bolts are each game's own
-#define BOLT_O_CLASS 13
-#define BIG_BOLT_O_CLASS 14
+// Bolts are each game's own: classes 13 to 16, worth 1, 5, 20 and 50
+#define FIRST_BOLT_O_CLASS 13
+#define LAST_BOLT_O_CLASS 16
 
 // Some things on the player aren't posed from their own animation: every frame the game poses them from the player's
 //  joints into a pose buffer of its own and points the moby's frame pointers at it. Their own animation alone shows
@@ -565,7 +565,7 @@ void Mirror::send_snapshot(Client* client) {
 
 void Mirror::on_spawned(Moby* moby, bool by_player, Moby* spawner) {
     if (moby == nullptr || game_state != PlayerControl || moby->o_class == HERO_O_CLASS ||
-        moby->o_class == BOLT_O_CLASS || moby->o_class == BIG_BOLT_O_CLASS ||
+        (moby->o_class >= FIRST_BOLT_O_CLASS && moby->o_class <= LAST_BOLT_O_CLASS) ||
         (!by_player && spawned_slot(spawner) < 0)) {
         return;
     }

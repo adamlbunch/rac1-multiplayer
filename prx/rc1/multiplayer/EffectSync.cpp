@@ -35,9 +35,9 @@
 
 #define MAX_MUTED 32
 
-// Bolts dropped by enemies, which are always each game's own
-#define BOLT_O_CLASS 13
-#define BIG_BOLT_O_CLASS 14
+// Bolts dropped by enemies, which are always each game's own: classes 13 to 16, worth 1, 5, 20 and 50
+#define FIRST_BOLT_O_CLASS 13
+#define LAST_BOLT_O_CLASS 16
 
 // Effects of a player we aren't showing, or whose frame is this far off what we show, are made right away
 #define EFFECT_FAR_FRAMES 30
@@ -172,7 +172,7 @@ void EffectSync::after_moby_update(Moby* moby) {
 }
 
 void EffectSync::mute(Moby* moby) {
-    if (moby == nullptr || moby->o_class == BOLT_O_CLASS || moby->o_class == BIG_BOLT_O_CLASS) {
+    if (moby == nullptr || (moby->o_class >= FIRST_BOLT_O_CLASS && moby->o_class <= LAST_BOLT_O_CLASS)) {
         return;
     }
 

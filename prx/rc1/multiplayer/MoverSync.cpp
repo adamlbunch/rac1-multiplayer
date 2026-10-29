@@ -92,9 +92,9 @@
 //  started talking to the player there too.
 #define TRANSITION_DELAY 10
 
-// Bolts are each player's own
-#define BOLT_O_CLASS 13
-#define BIG_BOLT_O_CLASS 14
+// Bolts are each player's own: classes 13 to 16, worth 1, 5, 20 and 50
+#define FIRST_BOLT_O_CLASS 13
+#define LAST_BOLT_O_CLASS 16
 
 // Gold bolts are shared by the mod's own messages (see GoldBolt). Their collected state flies them into the camera of
 //  the game whose player took them: put in it in another game, they crashed there (Batalia).
@@ -395,7 +395,8 @@ static bool involves_player(Moby* moby, u16 vars_size) {
 }
 
 static bool syncable_class(Moby* moby) {
-    return moby->o_class != BOLT_O_CLASS && moby->o_class != BIG_BOLT_O_CLASS && moby->o_class != GOLD_BOLT_O_CLASS;
+    return (moby->o_class < FIRST_BOLT_O_CLASS || moby->o_class > LAST_BOLT_O_CLASS) &&
+           moby->o_class != GOLD_BOLT_O_CLASS;
 }
 
 // Drawn, unlike the level's invisible triggers and managers, which have no model at all
