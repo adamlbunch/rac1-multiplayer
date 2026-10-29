@@ -92,9 +92,11 @@ typedef void (*MobyUpdateFunction)(Moby*);
 // Updates after which a moby that changes its state does that while the level runs, not as it sets itself up
 #define SETTLED_UPDATES 60
 
-// Bolts that fly out of destroyed enemies, which are always each game's own
-#define BOLT_O_CLASS 13
-#define BIG_BOLT_O_CLASS 14
+// Bolts that fly out of destroyed enemies, which are always each game's own: classes 13 to 16, worth 1, 5, 20 and
+//  50. Each flies at its own game's player: when the host ran a 20-bolt piece for everyone, another game took on its
+//  "flying at the player" state without the player it flew at, and crashed running it once the host stopped (Aridia).
+#define FIRST_BOLT_O_CLASS 13
+#define LAST_BOLT_O_CLASS 16
 
 struct EnemyRecord {
     u32 frame;  // 0 for none
@@ -991,7 +993,7 @@ static void after_transform(Moby* moby) {
     }
 
     // What an enemy we run spawns (a shot, debris...) is drawn from ours in other games until it's gone
-    if (enemy == nullptr && moby->o_class != BOLT_O_CLASS && moby->o_class != BIG_BOLT_O_CLASS) {
+    if (enemy == nullptr && (moby->o_class < FIRST_BOLT_O_CLASS || moby->o_class > LAST_BOLT_O_CLASS)) {
         Moby* spawner = SpawnedMobys::spawner_of(moby);
         SyncedEnemy* spawner_enemy = spawner != nullptr ? find_enemy(sync_index(spawner)) : nullptr;
         if (spawner_enemy != nullptr && spawner_enemy->owner == OWNER_SELF) {
@@ -1386,6 +1388,11 @@ static Moby* make_copy(MPEnemyState* state, bool revived) {
 
 static void receive_state(EnemySender* sender_info, u32 frame, MPEnemyState* state, MPEnemyMatrix* matrix) {
     u16 sender = sender_info->uuid;
+
+    // Games from before FIRST_BOLT_O_CLASS still send their 20 and 50-bolt pieces
+    if (state->o_class >= FIRST_BOLT_O_CLASS && state->o_class <= LAST_BOLT_O_CLASS) {
+        return;
+    }
 
     Moby* moby = SpawnedMobys::find(state->uid, state->spawn, state->o_class);
     int index = sync_index(moby);
