@@ -42,6 +42,7 @@ struct ModelSlot {
     bool loaded;
     u16 o_class;
     u32 last_used;
+    u32 texture_page;   // GADGET_TEXTURE_PAGE when it was loaded: its textures are only there while that still is
 };
 
 static u8* memory_ = nullptr;
@@ -79,7 +80,8 @@ static bool prepare_memory() {
         return false;
     }
 
-    // Still the level we took memory from. A new level sets its memory up from scratch, and ours with it.
+    // Still where we took it. The game keeps the end of its level memory where we moved it from level to level, so this
+    //  holds on every level after the first one (what's in our memory is forgotten for each new level, see reset).
     if (memory_ != nullptr && heap == heap_ && heap[2] == heap_end_ && (u32)memory_ == heap_end_) {
         return true;
     }
@@ -151,6 +153,12 @@ bool GadgetModels::give_back(u32* heap) {
 
 void GadgetModels::reset() {
     gave_back_ = false;
+
+    // Each level puts the gadgets' textures somewhere else. A model loaded for the last level was drawn with textures
+    //  that aren't there any more, and RPCS3's renderer crashed on it ("rsx::get_address ... Invalid location": Veldin's
+    //  copy of another player's weapon on Novalis, found by the co-op bots). Nothing is drawn with ours now, the
+    //  mod's mobys went with the old level, so they're loaded again the next time someone holds one.
+    memset(slots_, 0, sizeof(slots_));
 }
 
 void GadgetModels::touch(MobyClass* model) {
@@ -171,24 +179,33 @@ MobyClass* GadgetModels::load(u16 o_class) {
         return nullptr;
     }
 
-    // Loaded already, maybe for someone else holding the same gadget
+    // Loaded already, maybe for someone else holding the same gadget. One loaded for textures the game has moved since
+    //  isn't drawn any more (Mirror drops a copy whose model it doesn't get back), and is loaded again once nothing has
+    //  drawn from it for a few frames.
     for (int i = 0; i < n_slots_; i++) {
         if (slots_[i].loaded && slots_[i].o_class == o_class) {
-            slots_[i].last_used = ticks_;
-            return (MobyClass*)(memory_ + i * SLOT_SIZE);
+            if (slots_[i].texture_page == GADGET_TEXTURE_PAGE) {
+                slots_[i].last_used = ticks_;
+                return (MobyClass*)(memory_ + i * SLOT_SIZE);
+            }
+
+            slots_[i].loaded = false;
         }
     }
 
-    // Into the slot used longest ago, if nothing has drawn from it for a few frames
+    // Into an empty slot, else the one used longest ago, if nothing has drawn from it for a few frames
     int slot = -1;
     for (int i = 0; i < n_slots_; i++) {
+        if (ticks_ - slots_[i].last_used < SLOT_IN_USE_TICKS) {
+            continue;
+        }
+
         if (!slots_[i].loaded) {
             slot = i;
             break;
         }
 
-        if (ticks_ - slots_[i].last_used >= SLOT_IN_USE_TICKS &&
-            (slot < 0 || slots_[i].last_used < slots_[slot].last_used)) {
+        if (slot < 0 || slots_[i].last_used < slots_[slot].last_used) {
             slot = i;
         }
     }
@@ -219,6 +236,7 @@ MobyClass* GadgetModels::load(u16 o_class) {
     slots_[slot].loaded = true;
     slots_[slot].o_class = o_class;
     slots_[slot].last_used = ticks_;
+    slots_[slot].texture_page = GADGET_TEXTURE_PAGE;
 
     return (MobyClass*)model;
 }
